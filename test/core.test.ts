@@ -116,3 +116,28 @@ test('mapLimit preserves order and bounds concurrency', async () => {
   assert.equal(peak, 2);
   assert.deepEqual(chunk([1, 2, 3], 2), [[1, 2], [3]]);
 });
+
+test('YouTube handles resolve to the page’s own channel, not related ones', () => {
+  const html = `<html><head>
+    <link rel="alternate" type="application/rss+xml" title="RSS" href="https://www.youtube.com/feeds/videos.xml?channel_id=UCin0m13qWv3-051xlWlHamA">
+    <link rel="canonical" href="https://www.youtube.com/channel/UCHnyfMqiRRG1u-2MsSQLbXA">
+  </head></html>`;
+  assert.deepEqual(findFeedLinks(html, 'https://www.youtube.com/@veritasium'), [
+    'https://www.youtube.com/feeds/videos.xml?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA',
+  ]);
+});
+
+test('Reddit link posts use the linked article, self posts keep the thread', () => {
+  const atom = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>programming</title>
+  <entry><id>t3_a</id><title>CI from 27 to 4 minutes</title><link href="https://www.reddit.com/r/programming/comments/a/ci/"/>
+  <content type="html">&lt;a href=&quot;https://blog.example/ci?x=1&amp;amp;y=2&quot;&gt;[link]&lt;/a&gt; &lt;a href=&quot;https://www.reddit.com/r/programming/comments/a/ci/&quot;&gt;[comments]&lt;/a&gt;</content></entry>
+  <entry><id>t3_b</id><title>Ask: tabs or spaces?</title><link href="https://www.reddit.com/r/programming/comments/b/ask/"/>
+  <content type="html">&lt;a href=&quot;https://www.reddit.com/r/programming/comments/b/ask/&quot;&gt;[link]&lt;/a&gt;</content></entry></feed>`;
+  const feed = parseFeedText(atom, 'https://www.reddit.com/r/programming/.rss');
+  assert.equal(feed.items[0].url, 'https://blog.example/ci?x=1&y=2');
+  assert.equal(feed.items[1].url, 'https://www.reddit.com/r/programming/comments/b/ask/');
+});
+
+test('Hacker News maps to the hnrss mirror', () => {
+  assert.equal(knownFeedFor(new URL('https://news.ycombinator.com/')), 'https://hnrss.org/frontpage?points=150');
+});

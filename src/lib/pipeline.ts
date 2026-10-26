@@ -28,6 +28,8 @@ export type RunStats = {
   summarised: number;
   queued: number;
   editionItems: number;
+  thin: number;
+  extracted: number;
 };
 
 /** Start a run unless one is already in progress (enforced by a unique partial index). */
@@ -117,7 +119,7 @@ async function markAttemptFailed(ids: number[]) {
 
 export async function executeRun(runId: number): Promise<void> {
   const t0 = Date.now();
-  const stats: RunStats = { sources: 0, failedSources: 0, newItems: 0, summarised: 0, queued: 0, editionItems: 0 };
+  const stats: RunStats = { sources: 0, failedSources: 0, newItems: 0, summarised: 0, queued: 0, editionItems: 0, thin: 0, extracted: 0 };
   const stage = (text: string) => sql`update runs set stage = ${text}, stats = ${sql.json(stats)} where id = ${runId}`;
   const finish = (status: 'done' | 'error', text: string, extra: { error?: string; editionId?: number } = {}) => sql`
     update runs set status = ${status}, stage = ${text}, stats = ${sql.json(stats)}, finished_at = now(),
@@ -138,12 +140,14 @@ export async function executeRun(runId: number): Promise<void> {
       select * from items where status = 'pending'
       order by published_at desc nulls last, id desc limit ${MAX_SUMMARISE_PER_RUN}`;
     const thin = pending.filter((i) => (i.content?.length ?? 0) < THIN_CONTENT);
+    stats.thin = thin.length;
     if (thin.length) {
       await stage(`Reading ${thin.length} article${thin.length === 1 ? '' : 's'}`);
       await mapLimit(thin, 8, async (item) => {
         const text = await extractArticleText(item.url);
         if (text && text.length > (item.content?.length ?? 0)) {
           item.content = truncate(text, 12_000);
+          stats.extracted++;
           await sql`update items set content = ${item.content} where id = ${item.id}`;
         }
       });

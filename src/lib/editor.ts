@@ -47,6 +47,7 @@ export async function summariseBatch(articles: ArticleInput[], opts: { interests
     'For every article, return:',
     '- summary: 2–3 sentences (under 70 words) stating the actual substance — the claim, finding, decision, number or announcement — so the reader knows what it says without clicking. Lead with the point. No "In this article", "The author discusses", hype, or rhetorical questions. Plain, specific language.',
     '- If the content is thin (just a title or teaser), write one sentence on what the piece is about, inferred from the title and source, and do not invent details. Never mention that content is missing, short or unavailable. For videos or podcasts, summarise what the episode covers.',
+    '- When the content has substance, use the full 2–3 sentences and include at least one concrete specific from it (a number, name, result, mechanism or recommendation). A vague summary like "explores the factors behind X" is a failure — say what the factors are.',
     '- Write the summary in English even if the article is not.',
     '- topic: a short Title Case label (1–3 words), e.g. "AI", "Startups", "Personal Finance", "Climate". Reuse an existing label when one fits.',
     '- importance 1–5 for this reader: 5 = major news or unusually valuable insight; 4 = substantive and relevant; 3 = solid, worth a skim; 2 = minor or niche; 1 = promotional, sponsored, job posts, link roundups with no substance, housekeeping.',

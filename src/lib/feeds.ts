@@ -99,7 +99,12 @@ export function parseFeedText(text: string, feedUrl: string): ParsedFeed {
         .map((m) => (m as { description?: string }).description)
         .find(Boolean);
       const content = htmlToText(it.content) || htmlToText(it.description) || htmlToText(mediaDescription) || '';
-      const url = safeUrl(it.url, siteUrl ?? feedUrl) ?? (it.id && /^https?:\/\//.test(it.id) ? it.id : null);
+      let url = safeUrl(it.url, siteUrl ?? feedUrl) ?? (it.id && /^https?:\/\//.test(it.id) ? it.id : null);
+      // Reddit link posts point at the comment thread; the article itself is the "[link]" anchor.
+      if (url && /(^|\.)reddit\.com$/.test(hostOf(url))) {
+        const external = /<a href="([^"]+)">\s*\[link\]\s*<\/a>/.exec(it.content ?? it.description ?? '')?.[1]?.replace(/&amp;/g, '&');
+        if (external && !/(^|\.)(reddit\.com|redd\.it)$/.test(hostOf(external))) url = safeUrl(external, url) ?? url;
+      }
       return {
         guid: it.id ?? null,
         url,
@@ -141,6 +146,8 @@ export function knownFeedFor(input: URL): string | null {
     if (parts[0] === 'channel' && parts[1]) return `https://www.youtube.com/feeds/videos.xml?channel_id=${parts[1]}`;
     return null; // @handles need a page fetch to find the channel id
   }
+  // HN rate-limits cloud IPs; hnrss.org mirrors it and lets us keep only well-upvoted front-page stories.
+  if (host === 'news.ycombinator.com') return 'https://hnrss.org/frontpage?points=150';
   if (host === 'reddit.com' && parts[0] === 'r' && parts[1]) {
     return `https://www.reddit.com/r/${parts[1]}/${parts[2] && parts[2] !== 'comments' ? `${parts[2]}/` : ''}.rss`;
   }
@@ -155,6 +162,14 @@ export function knownFeedFor(input: URL): string | null {
 
 /** Extract feed URLs advertised in an HTML page, best candidates first. */
 export function findFeedLinks(html: string, baseUrl: string): string[] {
+  // YouTube pages also advertise feeds for related channels; the canonical URL names the page's own channel.
+  if (hostOf(baseUrl).endsWith('youtube.com')) {
+    const id =
+      /<link[^>]+rel=["']canonical["'][^>]+href=["']https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})/i.exec(html)?.[1] ??
+      /<meta[^>]+itemprop=["'](?:identifier|channelId)["'][^>]+content=["'](UC[\w-]{22})/i.exec(html)?.[1] ??
+      /"externalId":"(UC[\w-]{22})"/.exec(html)?.[1];
+    if (id) return [`https://www.youtube.com/feeds/videos.xml?channel_id=${id}`];
+  }
   const head = html.slice(0, 400_000);
   const found: string[] = [];
   for (const tag of head.match(/<link\b[^>]*>/gi) ?? []) {
@@ -165,11 +180,6 @@ export function findFeedLinks(html: string, baseUrl: string): string[] {
     if (!/(rss|atom|feed)\+(xml|json)|application\/xml|text\/xml/.test(type)) continue;
     const url = safeUrl(href?.replace(/&amp;/g, '&'), baseUrl);
     if (url) found.push(url);
-  }
-  // YouTube channel pages sometimes only expose the id in page data.
-  if (!found.length && hostOf(baseUrl).endsWith('youtube.com')) {
-    const id = /"(?:externalId|channelId)":"(UC[\w-]{22})"/.exec(html)?.[1];
-    if (id) found.push(`https://www.youtube.com/feeds/videos.xml?channel_id=${id}`);
   }
   const unique = [...new Set(found)];
   // Prefer main feeds over comment feeds.
