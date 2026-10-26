@@ -88,19 +88,20 @@ test('htmlToText decodes entities and keeps paragraphs', () => {
   assert.equal(htmlToText('plain'), 'plain');
 });
 
-test('normaliseLayout keeps every story exactly once', () => {
-  const main = [1, 2, 3, 4, 5].map((id) => ({ id, title: `t${id}`, source: 's', topic: id < 3 ? 'AI' : 'Money', importance: id, summary: '' }));
-  const layout = normaliseLayout(main, { lead: [5, 5, 99], sections: [{ title: 'AI', ids: [1, 5, 1] }, { title: 'Empty', ids: [42] }] }, [9]);
-  const all = [...layout.lead, ...layout.sections.flatMap((s) => s.ids)];
-  assert.deepEqual([...all].sort(), [1, 2, 3, 4, 5]);
-  assert.equal(new Set(all).size, all.length);
+test('normaliseLayout keeps every story at most once and respects caps', () => {
+  const items = [1, 2, 3, 4, 5, 6].map((id) => ({ id, title: `t${id}`, source: 's', topic: id < 3 ? 'AI' : 'Money', quality: id === 6 ? 1 : id, tldr: '', published: null }));
+  const layout = normaliseLayout(items, { lead: [5, 5, 99], sections: [{ title: 'AI', ids: [1, 5, 1] }, { title: 'Empty', ids: [42] }], briefly: [6] }, { maxStories: 4, briefly: true });
+  const main = [...layout.lead, ...layout.sections.flatMap((s) => s.ids)];
+  assert.equal(main.length, 4, 'fills up to the cap with the best remaining stories');
+  assert.equal(new Set([...main, ...layout.briefly]).size, main.length + layout.briefly.length);
   assert.deepEqual(layout.lead, [5]);
   assert.ok(!layout.sections.some((s) => s.title === 'Empty'));
-  assert.deepEqual(layout.briefly, [9]);
-  // A model failure (empty draft) still produces a usable layout with a lead story.
-  const fallback = normaliseLayout(main, {}, []);
+  assert.deepEqual(layout.briefly, [6]);
+  // A model failure (empty draft) still produces a usable, capped layout with a lead story.
+  const fallback = normaliseLayout(items, {}, { maxStories: 3, briefly: false });
   assert.deepEqual(fallback.lead, [5]);
-  assert.equal(fallback.sections.flatMap((s) => s.ids).length, 4);
+  assert.equal(fallback.sections.flatMap((s) => s.ids).length, 2);
+  assert.deepEqual(fallback.briefly, []);
 });
 
 test('mapLimit preserves order and bounds concurrency', async () => {

@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 
 // One small pool per warm function instance. `prepare: false` is required by
-// Supabase's transaction pooler (port 6543).
+// Supabase's transaction pooler (port 6543). All app tables live in the private `app` schema.
 const globalForSql = globalThis as unknown as { __sql?: postgres.Sql };
 
 export const sql: postgres.Sql =
@@ -20,12 +20,14 @@ export const sql: postgres.Sql =
 
 export type Source = {
   id: string;
+  user_id: string;
   input_url: string;
   feed_url: string;
   site_url: string | null;
   title: string;
   kind: string;
   enabled: boolean;
+  inbox_email: string | null;
   etag: string | null;
   last_modified: string | null;
   created_at: Date;
@@ -35,22 +37,24 @@ export type Source = {
   consecutive_failures: number;
 };
 
-export type Item = {
+export type Article = {
   id: number;
-  source_id: string | null;
-  source_title: string;
+  dedupe_key: string;
   url: string;
   title: string;
   author: string | null;
+  source_title: string;
   published_at: Date | null;
-  fetched_at: Date;
+  image_url: string | null;
   content: string | null;
+  tldr: string | null;
   summary: string | null;
+  key_points: string[] | null;
   topic: string | null;
-  importance: number | null;
-  status: 'pending' | 'done' | 'skipped' | 'failed';
-  attempts: number;
-  edition_id: number | null;
+  quality: number | null;
+  summarized_at: Date | null;
+  summary_attempts: number;
+  created_at: Date;
 };
 
 export type EditionLayout = {
@@ -61,6 +65,7 @@ export type EditionLayout = {
 
 export type Edition = {
   id: number;
+  user_id: string;
   created_at: Date;
   headline: string | null;
   intro: string | null;
@@ -68,10 +73,13 @@ export type Edition = {
   item_count: number;
   source_count: number;
   model: string | null;
+  trigger: string | null;
+  emailed_at: Date | null;
 };
 
 export type Run = {
   id: number;
+  user_id: string;
   started_at: Date;
   finished_at: Date | null;
   trigger: string;

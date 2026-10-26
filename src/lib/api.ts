@@ -1,13 +1,24 @@
 import { NextResponse } from 'next/server';
-import { isAuthenticated } from './auth.ts';
+import { getSessionUser, type SessionUser } from './auth';
 
 export function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-/** Returns a 401 response when the caller isn't signed in with the current passcode, else null. */
-export async function denyUnlessAuthed(): Promise<NextResponse | null> {
-  return (await isAuthenticated()) ? null : json({ error: 'Not signed in' }, 401);
+type Handler<C> = (user: SessionUser, request: Request, ctx: C) => Promise<Response>;
+
+/** Wrap a route handler so it only runs for a signed-in user. */
+export function withUser<C = unknown>(handler: Handler<C>) {
+  return async (request: Request, ctx: C) => {
+    const user = await getSessionUser();
+    if (!user) return json({ error: 'Not signed in' }, 401);
+    try {
+      return await handler(user, request, ctx);
+    } catch (err) {
+      console.error(err);
+      return json({ error: err instanceof Error ? err.message : 'Something went wrong' }, 500);
+    }
+  };
 }
 
 export async function readJson<T>(request: Request): Promise<Partial<T>> {

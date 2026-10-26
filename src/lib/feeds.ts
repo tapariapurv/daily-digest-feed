@@ -1,5 +1,6 @@
 import { parseFeed } from '@rowanmanning/feed-parser';
 import { describeFetchError, fetchText } from './http.ts';
+import { extractLinks, heuristicArticleLinks, pageTitle } from './scrape.ts';
 import { htmlToText, hostOf } from './text.ts';
 
 export type ParsedItem = {
@@ -9,6 +10,7 @@ export type ParsedItem = {
   author: string | null;
   published: Date | null;
   content: string;
+  image: string | null;
 };
 
 export type ParsedFeed = {
@@ -60,6 +62,8 @@ type JsonFeed = {
     external_url?: string;
     title?: string;
     content_html?: string;
+    image?: string;
+    banner_image?: string;
     content_text?: string;
     summary?: string;
     date_published?: string;
@@ -67,6 +71,25 @@ type JsonFeed = {
     author?: { name?: string };
   }[];
 };
+
+/** First real <img> in an HTML fragment, skipping tracking pixels and emoji. */
+export function firstImage(html: string | null | undefined, base: string): string | null {
+  if (!html) return null;
+  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    const width = Number(/\bwidth\s*=\s*["']?(\d+)/i.exec(tag)?.[1] ?? 0);
+    if (!src || src.startsWith('data:') || (width && width < 80)) continue;
+    if (/pixel|tracking|emoji|gravatar|feedburner|doubleclick|\/1x1|spacer/i.test(src)) continue;
+    const url = safeUrl(src.replace(/&amp;/g, '&'), base);
+    if (url) return url;
+  }
+  return null;
+}
+
+function youtubeThumb(url: string | null): string | null {
+  const id = url && /(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([\w-]{11})/.exec(url)?.[1];
+  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
+}
 
 /** Parse RSS, Atom, RDF or JSON Feed text into a normalised shape. */
 export function parseFeedText(text: string, feedUrl: string): ParsedFeed {
@@ -84,6 +107,7 @@ export function parseFeedText(text: string, feedUrl: string): ParsedFeed {
           author: it.authors?.[0]?.name ?? it.author?.name ?? null,
           published: toDate(it.date_published),
           content,
+          image: safeUrl(it.image ?? it.banner_image, feedUrl) ?? firstImage(it.content_html, feedUrl),
         };
       }),
     };
@@ -105,6 +129,13 @@ export function parseFeedText(text: string, feedUrl: string): ParsedFeed {
         const external = /<a href="([^"]+)">\s*\[link\]\s*<\/a>/.exec(it.content ?? it.description ?? '')?.[1]?.replace(/&amp;/g, '&');
         if (external && !/(^|\.)(reddit\.com|redd\.it)$/.test(hostOf(external))) url = safeUrl(external, url) ?? url;
       }
+      const mediaImage = (it.media ?? []).find((m) => /^image/.test(m.mimeType ?? '') || m.type === 'image' || m.image)?.url ??
+        (it.media ?? []).find((m) => m.image)?.image;
+      const image =
+        youtubeThumb(url) ??
+        safeUrl(it.image?.url, url ?? feedUrl) ??
+        safeUrl(mediaImage, url ?? feedUrl) ??
+        firstImage(it.content ?? it.description, url ?? feedUrl);
       return {
         guid: it.id ?? null,
         url,
@@ -112,6 +143,7 @@ export function parseFeedText(text: string, feedUrl: string): ParsedFeed {
         author: it.authors?.find((a) => a.name)?.name ?? null,
         published: toDate(it.published ?? it.updated),
         content,
+        image,
       };
     }),
   };
@@ -270,6 +302,14 @@ export async function resolveSource(raw: string): Promise<ResolvedSource> {
   const results = await Promise.all([...new Set(guesses)].map(tryFeed));
   const hit = results.find((r) => r && r.feed.items.length > 0) ?? results.find(Boolean);
   if (hit) return done(hit.feedUrl, hit.feed);
+
+  // No feed anywhere: follow the page itself if it links to enough article-like pages.
+  if (page.status < 400 && /html/i.test(page.contentType)) {
+    const links = extractLinks(page.text, page.url);
+    if (heuristicArticleLinks(links).length >= 2 || links.filter((l) => l.text.split(' ').length >= 5).length >= 4) {
+      return { feedUrl: page.url, title: pageTitle(page.text, page.url), siteUrl: page.url, kind: 'page', itemCount: links.length };
+    }
+  }
 
   if (page.status === 403 || page.status === 429) {
     throw new Error(`${input.hostname} blocked the request (HTTP ${page.status}). Try pasting its feed URL directly.`);

@@ -1,0 +1,143 @@
+import type { EditionData } from './editions';
+
+// Shown in the design preview before a reader has an edition, and on the landing page.
+const now = Date.now();
+const ago = (h: number) => new Date(now - h * 3600_000).toISOString();
+const img = (seed: string) => `https://picsum.photos/seed/${seed}/900/560`;
+
+export const SAMPLE_EDITION: EditionData = {
+  edition: {
+    id: 0,
+    created_at: new Date(now).toISOString(),
+    headline: 'Apple rents its AI brain, SQLite learns to share',
+    intro:
+      'Apple’s $1B-a-year Gemini deal is a bet that owning distribution beats owning models — a theme that runs through Figma’s pricing playbook, where free viewers feed paid editors. On the infrastructure side, SQLite finally handles concurrent writes.',
+    layout: {
+      lead: [1, 2],
+      sections: [
+        { title: 'AI & Software', ids: [3, 4] },
+        { title: 'Business', ids: [5, 6] },
+      ],
+      briefly: [7, 8],
+    },
+    item_count: 6,
+    source_count: 5,
+  },
+  number: 12,
+  prevId: null,
+  nextId: null,
+  readMinutes: 4,
+  readIds: [4],
+  savedIds: [2],
+  items: [
+    {
+      id: 1,
+      source_title: 'Stratechery',
+      url: 'https://stratechery.com',
+      title: 'Apple’s AI Bargain',
+      author: 'Ben Thompson',
+      published_at: ago(5),
+      tldr: 'Apple will pay ~$1B a year to run Siri on Google’s Gemini — distribution over model ownership.',
+      summary:
+        'Apple agreed to pay roughly $1 billion a year to license Google’s Gemini models for the next Siri. The bet: Apple’s edge is distribution across two billion devices, not frontier training — but it now depends on a direct rival for a core experience.',
+      key_points: ['Deal covers the next major Siri release', 'Apple keeps the on-device layer', 'Risk: dependency on a competitor'],
+      image_url: img('apple-ai'),
+      topic: 'AI',
+    },
+    {
+      id: 2,
+      source_title: 'Simon Willison',
+      url: 'https://simonwillison.net',
+      title: 'SQLite now supports concurrent writers',
+      author: null,
+      published_at: ago(2),
+      tldr: 'BEGIN CONCURRENT lands in SQLite: 3–5× write throughput for web apps.',
+      summary:
+        'SQLite shipped BEGIN CONCURRENT, allowing multiple writers when transactions touch different pages. Benchmarks show 3–5× throughput on write-heavy web workloads, removing the biggest objection to SQLite in production.',
+      key_points: ['Works when transactions touch different pages', 'No change needed for read-heavy apps'],
+      image_url: img('sqlite-db'),
+      topic: 'Databases',
+    },
+    {
+      id: 3,
+      source_title: 'Latent Space',
+      url: 'https://www.latent.space',
+      title: 'Prompt caching is quietly the biggest cost lever',
+      author: null,
+      published_at: ago(9),
+      tldr: 'Caching repeated prompts cut one team’s LLM bill by 68%.',
+      summary:
+        'Caching repeated system prompts cut LLM spend by 68% across three production apps. The piece walks through which providers cache automatically and where explicit cache breakpoints are needed.',
+      key_points: ['Biggest wins on long system prompts', 'Cache hit rate is the metric to watch'],
+      image_url: img('prompt-cache'),
+      topic: 'AI',
+    },
+    {
+      id: 4,
+      source_title: 'Hacker News',
+      url: 'https://news.ycombinator.com',
+      title: 'Show HN: A tiny Postgres in Rust',
+      author: null,
+      published_at: ago(12),
+      tldr: 'A 4,000-line, Postgres-compatible database built to learn.',
+      summary: 'A 4,000-line Rust implementation of a Postgres-compatible database with basic SQL, MVCC and the wire protocol, built as a learning project.',
+      key_points: ['Speaks the Postgres wire protocol', 'MVCC in under 600 lines'],
+      image_url: null,
+      topic: 'Databases',
+    },
+    {
+      id: 5,
+      source_title: 'Lenny’s Newsletter',
+      url: 'https://www.lennysnewsletter.com',
+      title: 'How Figma prices for enterprise',
+      author: null,
+      published_at: ago(7),
+      tldr: 'Free viewers drive virality; editors and an org tier drive 70% of revenue.',
+      summary:
+        'Figma charges only for editors and keeps viewers free to drive virality. Its org tier bundles SSO and admin controls at 3× the seat price, and enterprise now makes up 70% of revenue.',
+      key_points: ['Price on the role that creates value', 'Bundle security features into the top tier'],
+      image_url: img('figma-pricing'),
+      topic: 'Pricing',
+    },
+    {
+      id: 6,
+      source_title: 'The Verge',
+      url: 'https://www.theverge.com',
+      title: 'EU fines Meta €800M over Marketplace bundling',
+      author: null,
+      published_at: ago(4),
+      tldr: 'Meta must unbundle Marketplace from Facebook and plans to appeal.',
+      summary:
+        'The European Commission fined Meta €797 million for tying Facebook Marketplace to the social network, disadvantaging classified-ad rivals. Meta must stop the practice and plans to appeal.',
+      key_points: ['Largest DMA-era fine on Meta so far', 'Appeal expected to take years'],
+      image_url: img('eu-meta'),
+      topic: 'Policy',
+    },
+    {
+      id: 7,
+      source_title: 'Lenny’s Newsletter',
+      url: 'https://www.lennysnewsletter.com',
+      title: 'Community wisdom: negotiating a lowball offer',
+      author: null,
+      published_at: ago(20),
+      tldr: null,
+      summary: null,
+      key_points: null,
+      image_url: null,
+      topic: 'Career',
+    },
+    {
+      id: 8,
+      source_title: 'Stratechery',
+      url: 'https://stratechery.com',
+      title: 'Weekly article index',
+      author: null,
+      published_at: ago(26),
+      tldr: null,
+      summary: null,
+      key_points: null,
+      image_url: null,
+      topic: 'Housekeeping',
+    },
+  ],
+};

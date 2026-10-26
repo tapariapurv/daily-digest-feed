@@ -1,17 +1,13 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { hostname } from '@/lib/format';
+import { PACKS } from '@/lib/packs';
 import type { SourceView } from '@/lib/sources';
 
-type Result = { input: string; ok: boolean; duplicate?: boolean; title?: string; error?: string };
+type Result = { input: string; ok: boolean; duplicate?: boolean; title?: string; kind?: string; via?: string; error?: string };
 
-const hostOf = (url: string | null) => {
-  try {
-    return url ? new URL(url).hostname.replace(/^www\./, '') : '';
-  } catch {
-    return '';
-  }
-};
+const KIND_LABEL: Record<string, string> = { page: 'Scanned page', youtube: 'YouTube', reddit: 'Reddit', newsletter: 'Newsletter' };
 
 function ago(iso: string | null) {
   if (!iso) return 'never';
@@ -21,18 +17,24 @@ function ago(iso: string | null) {
   return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 }
 
-/** Pull URLs out of pasted text, OPML or a plain list. */
-function extractUrls(text: string): string[] {
+/** Split what was typed/pasted into links and plain names; OPML files yield their feed URLs. */
+export function parseSourcesInput(text: string): { urls: string[]; names: string[] } {
   if (/<opml/i.test(text)) {
     const doc = new DOMParser().parseFromString(text, 'text/xml');
-    return [...doc.querySelectorAll('outline[xmlUrl], outline[xmlurl]')]
-      .map((o) => o.getAttribute('xmlUrl') ?? o.getAttribute('xmlurl') ?? '')
-      .filter(Boolean);
+    const urls = [...doc.querySelectorAll('outline')].map((o) => o.getAttribute('xmlUrl') ?? o.getAttribute('xmlurl') ?? '').filter(Boolean);
+    return { urls, names: [] };
   }
-  return text
-    .split(/[\s,]+/)
-    .map((t) => t.trim().replace(/^[<(\["']+|[>)\]"'.,;]+$/g, ''))
-    .filter((t) => /^(https?:\/\/|feed:)?[\w-]+(\.[\w-]+)+/i.test(t));
+  const urls: string[] = [];
+  const names: string[] = [];
+  for (const line of text.split(/\n|,(?![^(]*\))/)) {
+    const t = line.trim().replace(/^[-*•\d.)\s]+/, '').replace(/^[<(["']+|[>)\]"'.;]+$/g, '');
+    if (!t) continue;
+    const tokens = t.split(/\s+/);
+    const link = tokens.find((tok) => /^(https?:\/\/|feed:)/i.test(tok) || /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(tok));
+    if (link) urls.push(link);
+    else if (t.length <= 80) names.push(t);
+  }
+  return { urls, names };
 }
 
 function Status({ s }: { s: SourceView }) {
@@ -43,45 +45,63 @@ function Status({ s }: { s: SourceView }) {
   return (
     <span>
       <span className="dot ok" />
-      Checked {ago(s.last_success_at as unknown as string)} · {s.recent_items} in 30 days
+      Checked {ago(s.last_success_at as unknown as string)} · {s.recent_items} in your papers this month
     </span>
   );
 }
 
-export function SourcesManager({ initial }: { initial: SourceView[] }) {
-  const [sources, setSources] = useState(initial);
+export function SourcesManager({ initial, compact, onChange }: { initial: SourceView[]; compact?: boolean; onChange?: (s: SourceView[]) => void }) {
+  const [sources, setSourcesState] = useState(initial);
+  const setSources = (s: SourceView[]) => {
+    setSourcesState(s);
+    onChange?.(s);
+  };
   const [text, setText] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
   const [results, setResults] = useState<Result[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState({ url: '', title: '' });
   const [busy, setBusy] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; msg: string } | null>(null);
+  const [inbox, setInbox] = useState<{ email: string } | null>(null);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  async function add(urls: string[]) {
-    if (!urls.length) {
-      setResults([{ input: text.trim() || '(empty)', ok: false, error: 'No links found in what you pasted.' }]);
+  async function add(payload: { urls: string[]; names: string[] }, label: string) {
+    if (!payload.urls.length && !payload.names.length) {
+      setResults([{ input: text.trim() || '(empty)', ok: false, error: 'Nothing to add — paste links or type names.' }]);
       return;
     }
-    setAdding(true);
+    setAdding(label);
     setResults([]);
     try {
-      const res = await fetch('/api/sources', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ urls }),
-      });
+      const res = await fetch('/api/sources', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       setResults(body.results);
       setSources(body.sources);
-      // Keep only the ones that failed in the box, so they can be fixed and retried.
-      setText((body.results as Result[]).filter((r) => !r.ok).map((r) => r.input).join('\n'));
+      if (label === 'text') setText((body.results as Result[]).filter((r) => !r.ok).map((r) => r.input).join('\n'));
     } catch (err) {
       setResults([{ input: 'Request', ok: false, error: err instanceof Error ? err.message : String(err) }]);
     } finally {
-      setAdding(false);
+      setAdding(null);
+    }
+  }
+
+  async function createInbox() {
+    setAdding('inbox');
+    setInboxError(null);
+    try {
+      const res = await fetch('/api/sources/inbox', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Newsletters' }) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      setInbox(body.inbox);
+      setSources(body.sources);
+    } catch (err) {
+      setInboxError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAdding(null);
     }
   }
 
@@ -89,11 +109,7 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
     setBusy(id);
     setRowError(null);
     try {
-      const res = await fetch(`/api/sources/${id}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch(`/api/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setSources(data.sources);
@@ -114,44 +130,37 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
     setBusy(null);
   }
 
-  async function importFile(file: File) {
-    const content = await file.text();
-    await add(extractUrls(content));
-  }
+  const inboxes = sources.filter((s) => s.inbox_email);
+  const followed = new Set(sources.map((s) => hostname(s.site_url ?? s.feed_url)));
 
   return (
-    <div className="reveal">
-      <div className="masthead">
-        <div className="masthead-inner">
-          <h1 className="page-title">Sources</h1>
-          <p className="lede">
-            {sources.length ? `Following ${sources.length} source${sources.length === 1 ? '' : 's'}.` : 'Nothing followed yet.'} Paste links any time —
-            blog homepages, RSS or Atom feeds, Substack, Medium, Ghost, YouTube channels, subreddits, GitHub repos.
-          </p>
-        </div>
-      </div>
-
+    <div className="stack-lg">
       <form
         className="panel stack"
         onSubmit={(e) => {
           e.preventDefault();
-          add(extractUrls(text));
+          add(parseSourcesInput(text), 'text');
         }}
       >
-        <label className="field">
-          <span>Add sources — one or many</span>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={'https://stratechery.com\nhttps://www.lennysnewsletter.com\nyoutube.com/@veritasium\nreddit.com/r/programming'}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-          />
-        </label>
+        <div>
+          <h2 className="panel-title">Add sources</h2>
+          <p className="panel-sub">
+            Paste links or just type names — one per line. Blogs, news sites, Substack, Medium, YouTube channels, subreddits, GitHub repos. Sites
+            without a feed are scanned for new articles automatically.
+          </p>
+        </div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={'Stratechery\nLenny’s Newsletter\nhttps://www.theverge.com\nyoutube.com/@veritasium\nreddit.com/r/programming'}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          aria-label="Sources to add"
+        />
         <div className="row">
-          <button className="btn btn-primary" type="submit" disabled={adding || !text.trim()}>
-            {adding ? (
+          <button className="btn btn-primary" type="submit" disabled={!!adding || !text.trim()}>
+            {adding === 'text' ? (
               <>
                 <span className="pulse" aria-hidden /> Finding feeds…
               </>
@@ -159,7 +168,7 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
               'Add'
             )}
           </button>
-          <button className="btn btn-quiet" type="button" onClick={() => fileRef.current?.click()} disabled={adding}>
+          <button className="btn btn-quiet" type="button" onClick={() => fileRef.current?.click()} disabled={!!adding}>
             Import OPML
           </button>
           <input
@@ -167,13 +176,13 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
             type="file"
             accept=".opml,.xml,text/xml,text/x-opml"
             hidden
-            onChange={(e) => {
+            onChange={async (e) => {
               const f = e.target.files?.[0];
-              if (f) importFile(f);
+              if (f) await add(parseSourcesInput(await f.text()), 'opml');
               e.target.value = '';
             }}
           />
-          {sources.length > 0 && (
+          {sources.length > 0 && !compact && (
             <a className="btn btn-quiet" href="/api/sources/opml">
               Export OPML
             </a>
@@ -187,7 +196,9 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
                 <span>
                   {r.ok ? (
                     <>
-                      <strong>{r.title}</strong> {r.duplicate ? <span className="muted">— already following</span> : <span className="muted">— added</span>}
+                      <strong>{r.title}</strong>
+                      {r.kind && KIND_LABEL[r.kind] && <span className="badge">{KIND_LABEL[r.kind]}</span>}{' '}
+                      <span className="muted">{r.duplicate ? '— already following' : r.via ? `— found at ${hostname(r.via)}` : '— added'}</span>
                     </>
                   ) : (
                     <>
@@ -201,92 +212,149 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
         )}
       </form>
 
-      <details className="note" style={{ margin: '1.25rem 0 2.5rem' }}>
-        <summary style={{ cursor: 'pointer' }}>
-          <strong>Email-only newsletter?</strong> Here’s the free workaround.
-        </summary>
-        <p>
-          Go to <a href="https://kill-the-newsletter.com" target="_blank" rel="noreferrer">kill-the-newsletter.com</a>, create an inbox (free, no
-          account), and subscribe to the newsletter with the email address it gives you. Then paste the <em>feed</em> URL it shows here. Most Substack,
-          Beehiiv, Ghost and Buttondown newsletters don’t need this — just paste their web address.
-        </p>
-      </details>
+      <section className="panel">
+        <h2 className="panel-title">Starter packs</h2>
+        <p className="panel-sub">One tap adds a handful of well-loved sources. Remove any you don’t want later.</p>
+        <div className="packs">
+          {PACKS.map((p) => {
+            const have = p.urls.every((u) => followed.has(hostname(u)));
+            return (
+              <button key={p.id} type="button" className="pack" aria-pressed={have} disabled={!!adding || have} onClick={() => add({ urls: p.urls, names: [] }, p.id)}>
+                <strong>
+                  {adding === p.id ? 'Adding…' : p.name} {have && '✓'}
+                </strong>
+                <span>{p.blurb}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="panel stack">
+        <div>
+          <h2 className="panel-title">Email newsletters</h2>
+          <p className="panel-sub">
+            Get a private email address for newsletters that only arrive by email. Subscribe to them with this address and every issue shows up in
+            your paper — summarised like everything else.
+          </p>
+        </div>
+        {inboxes.map((s) => (
+          <div key={s.id} className="inbox-address">
+            <span style={{ flex: 1 }}>{s.inbox_email}</span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(s.inbox_email!);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ))}
+        {inbox && <p className="note ok-text">Inbox ready. Use it to sign up for newsletters — new issues appear in your next edition.</p>}
+        {inboxError && <p className="note error-text">{inboxError}</p>}
+        {!inboxes.length && (
+          <div>
+            <button type="button" className="btn btn-primary" onClick={createInbox} disabled={!!adding}>
+              {adding === 'inbox' ? 'Creating…' : 'Create my newsletter inbox'}
+            </button>
+          </div>
+        )}
+        <p className="hint">Substack, Beehiiv, Ghost and Buttondown newsletters don’t need this — paste their web address above instead.</p>
+      </section>
 
       {sources.length > 0 && (
-        <ul className="source-list">
-          {sources.map((s) => (
-            <li key={s.id} className={`source${s.enabled ? '' : ' paused'}`}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`https://www.google.com/s2/favicons?domain=${hostOf(s.site_url ?? s.feed_url)}&sz=64`} alt=""
-                loading="lazy"
-                onError={(e) => {
-                  e.currentTarget.style.visibility = 'hidden';
-                }}
-              />
-              <div>
-                <div className="source-title">{s.title}</div>
-                <div className="source-sub">{hostOf(s.site_url ?? s.feed_url)}{s.kind !== 'feed' ? ` · ${s.kind}` : ''}</div>
-                <div className="source-sub">
-                  <Status s={s} />
-                </div>
-              </div>
-              <div className="source-actions">
-                <button
-                  className="btn btn-quiet"
-                  type="button"
-                  disabled={busy === s.id}
-                  onClick={() => {
-                    setEditing(editing === s.id ? null : s.id);
-                    setDraft({ url: s.input_url || s.feed_url, title: s.title });
-                    setRowError(null);
+        <section>
+          <div className="row" style={{ marginBottom: '0.6rem' }}>
+            <h2 className="panel-title" style={{ margin: 0 }}>
+              Following {sources.length}
+            </h2>
+          </div>
+          <ul className="source-list">
+            {sources.map((s) => (
+              <li key={s.id} className={`source${s.enabled ? '' : ' paused'}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`https://www.google.com/s2/favicons?domain=${hostname(s.site_url ?? s.feed_url)}&sz=64`}
+                  alt=""
+                  loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.style.visibility = 'hidden';
                   }}
-                >
-                  Edit
-                </button>
-                <button className="btn btn-quiet" type="button" disabled={busy === s.id} onClick={() => patch(s.id, { enabled: !s.enabled })}>
-                  {s.enabled ? 'Pause' : 'Resume'}
-                </button>
-                <button className="btn btn-quiet btn-danger" type="button" disabled={busy === s.id} onClick={() => remove(s)} aria-label={`Remove ${s.title}`}>
-                  ✕
-                </button>
-              </div>
-              {editing === s.id && (
-                <form
-                  className="source-edit stack"
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const urlChanged = draft.url.trim() !== (s.input_url || s.feed_url) && draft.url.trim() !== s.feed_url;
-                    const ok = await patch(s.id, urlChanged ? { url: draft.url, title: draft.title } : { title: draft.title });
-                    if (ok) setEditing(null);
-                  }}
-                >
-                  <label className="field">
-                    <span>Name</span>
-                    <input type="text" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
-                  </label>
-                  <label className="field">
-                    <span>Link</span>
-                    <input type="url" inputMode="url" value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} spellCheck={false} />
-                  </label>
-                  <p className="source-sub">Feed: {s.feed_url}</p>
-                  <div className="row">
-                    <button className="btn btn-primary" type="submit" disabled={busy === s.id}>
-                      {busy === s.id ? 'Saving…' : 'Save'}
-                    </button>
-                    <button className="btn btn-quiet" type="button" onClick={() => setEditing(null)}>
-                      Cancel
-                    </button>
+                />
+                <div>
+                  <div className="source-title">
+                    {s.title}
+                    {KIND_LABEL[s.kind] && <span className="badge">{KIND_LABEL[s.kind]}</span>}
                   </div>
-                </form>
-              )}
-              {rowError?.id === s.id && (
-                <p className="source-edit note" style={{ color: 'var(--accent)', margin: 0 }}>
-                  {rowError.msg}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+                  <div className="source-sub">{s.inbox_email ?? hostname(s.site_url ?? s.feed_url)}</div>
+                  <div className="source-sub">
+                    <Status s={s} />
+                  </div>
+                </div>
+                <div className="source-actions">
+                  <button
+                    className="btn btn-quiet btn-sm"
+                    type="button"
+                    disabled={busy === s.id}
+                    onClick={() => {
+                      setEditing(editing === s.id ? null : s.id);
+                      setDraft({ url: s.input_url || s.feed_url, title: s.title });
+                      setRowError(null);
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button className="btn btn-quiet btn-sm" type="button" disabled={busy === s.id} onClick={() => patch(s.id, { enabled: !s.enabled })}>
+                    {s.enabled ? 'Pause' : 'Resume'}
+                  </button>
+                  <button className="btn btn-quiet btn-sm btn-danger" type="button" disabled={busy === s.id} onClick={() => remove(s)} aria-label={`Remove ${s.title}`}>
+                    ✕
+                  </button>
+                </div>
+                {editing === s.id && (
+                  <form
+                    className="source-edit stack"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const urlChanged = !s.inbox_email && draft.url.trim() !== (s.input_url || s.feed_url) && draft.url.trim() !== s.feed_url;
+                      const ok = await patch(s.id, urlChanged ? { url: draft.url, title: draft.title } : { title: draft.title });
+                      if (ok) setEditing(null);
+                    }}
+                  >
+                    <label className="field">
+                      <span>Name</span>
+                      <input type="text" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+                    </label>
+                    {!s.inbox_email && (
+                      <label className="field">
+                        <span>Link</span>
+                        <input type="url" inputMode="url" value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} spellCheck={false} />
+                      </label>
+                    )}
+                    <p className="source-sub">{s.kind === 'page' ? 'Scanning page' : 'Feed'}: {s.feed_url}</p>
+                    <div className="row">
+                      <button className="btn btn-primary btn-sm" type="submit" disabled={busy === s.id}>
+                        {busy === s.id ? 'Saving…' : 'Save'}
+                      </button>
+                      <button className="btn btn-quiet btn-sm" type="button" onClick={() => setEditing(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+                {rowError?.id === s.id && (
+                  <p className="source-edit note error-text" style={{ margin: 0 }}>
+                    {rowError.msg}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   );

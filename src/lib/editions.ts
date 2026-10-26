@@ -1,54 +1,75 @@
-import { sql, type Edition, type Item } from './db.ts';
+import { sql, type EditionLayout } from './db';
 
-export type StoryItem = Pick<Item, 'id' | 'source_title' | 'url' | 'title' | 'author' | 'published_at' | 'fetched_at' | 'summary' | 'topic' | 'importance'>;
+export type StoryItem = {
+  id: number;
+  source_title: string;
+  url: string;
+  title: string;
+  author: string | null;
+  published_at: string | null;
+  tldr: string | null;
+  summary: string | null;
+  key_points: string[] | null;
+  image_url: string | null;
+  topic: string | null;
+};
 
-export type EditionView = {
-  edition: Edition;
+export type EditionData = {
+  edition: {
+    id: number;
+    created_at: string;
+    headline: string | null;
+    intro: string | null;
+    layout: EditionLayout;
+    item_count: number;
+    source_count: number;
+  };
   number: number;
-  items: Map<number, StoryItem>;
+  items: StoryItem[];
   prevId: number | null;
   nextId: number | null;
   readMinutes: number;
+  readIds: number[];
+  savedIds: number[];
 };
 
-export async function getEditionView(id?: number): Promise<EditionView | null> {
+export async function getEditionData(userId: string, id?: number): Promise<EditionData | null> {
   const [edition] = id
-    ? await sql<Edition[]>`select * from editions where id = ${id}`
-    : await sql<Edition[]>`select * from editions order by id desc limit 1`;
+    ? await sql<EditionData['edition'][]>`
+        select id, created_at, headline, intro, layout, item_count, source_count from app.editions where id = ${id} and user_id = ${userId}`
+    : await sql<EditionData['edition'][]>`
+        select id, created_at, headline, intro, layout, item_count, source_count from app.editions where user_id = ${userId} order by id desc limit 1`;
   if (!edition) return null;
-  const [items, [prev], [next], [{ n }]] = await Promise.all([
+  const [items, [prev], [next], [{ n }], reads, saved] = await Promise.all([
     sql<StoryItem[]>`
-      select id, source_title, url, title, author, published_at, fetched_at, summary, topic, importance
-      from items where edition_id = ${edition.id}`,
-    sql<{ id: number }[]>`select id from editions where id < ${edition.id} order by id desc limit 1`,
-    sql<{ id: number }[]>`select id from editions where id > ${edition.id} order by id asc limit 1`,
-    sql<{ n: number }[]>`select count(*)::int as n from editions where id <= ${edition.id}`,
+      select a.id, ua.source_title, a.url, a.title, a.author, a.published_at, a.tldr, a.summary, a.key_points, a.image_url, a.topic
+      from app.user_articles ua join app.articles a on a.id = ua.article_id
+      where ua.user_id = ${userId} and ua.edition_id = ${edition.id}`,
+    sql<{ id: number }[]>`select id from app.editions where user_id = ${userId} and id < ${edition.id} order by id desc limit 1`,
+    sql<{ id: number }[]>`select id from app.editions where user_id = ${userId} and id > ${edition.id} order by id asc limit 1`,
+    sql<{ n: number }[]>`select count(*)::int as n from app.editions where user_id = ${userId} and id <= ${edition.id}`,
+    sql<{ article_id: number }[]>`
+      select r.article_id from app.reads r join app.user_articles ua on ua.article_id = r.article_id and ua.user_id = r.user_id
+      where r.user_id = ${userId} and ua.edition_id = ${edition.id}`,
+    sql<{ article_id: number }[]>`
+      select s.article_id from app.saved s join app.user_articles ua on ua.article_id = s.article_id and ua.user_id = s.user_id
+      where s.user_id = ${userId} and ua.edition_id = ${edition.id}`,
   ]);
-  const words = items.reduce((w, i) => w + `${i.title} ${i.summary ?? ''}`.split(/\s+/).length, 0) + (edition.intro?.split(/\s+/).length ?? 0);
+  const words =
+    items.reduce((w, i) => w + `${i.title} ${i.summary ?? ''}`.split(/\s+/).length, 0) + (edition.intro?.split(/\s+/).length ?? 0);
   return {
-    edition,
+    edition: { ...edition, created_at: new Date(edition.created_at).toISOString() },
     number: n,
-    items: new Map(items.map((i) => [Number(i.id), i])),
-    prevId: prev ? Number(prev.id) : null,
-    nextId: next ? Number(next.id) : null,
+    items: items.map((i) => ({ ...i, published_at: i.published_at ? new Date(i.published_at).toISOString() : null })),
+    prevId: prev?.id ?? null,
+    nextId: next?.id ?? null,
     readMinutes: Math.max(1, Math.round(words / 230)),
+    readIds: reads.map((r) => r.article_id),
+    savedIds: saved.map((r) => r.article_id),
   };
 }
 
-export async function listEditions(limit = 120) {
-  return sql<Pick<Edition, 'id' | 'created_at' | 'headline' | 'item_count' | 'source_count'>[]>`
-    select id, created_at, headline, item_count, source_count from editions order by id desc limit ${limit}`;
-}
-
-export function timeAgo(date: Date | string | null): string {
-  if (!date) return '';
-  const diff = Date.now() - new Date(date).getTime();
-  const m = Math.round(diff / 60_000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 14) return `${d}d ago`;
-  return new Date(date).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+export async function listEditions(userId: string, limit = 200) {
+  return sql<{ id: number; created_at: Date; headline: string | null; item_count: number; source_count: number }[]>`
+    select id, created_at, headline, item_count, source_count from app.editions where user_id = ${userId} order by id desc limit ${limit}`;
 }

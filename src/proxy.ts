@@ -1,23 +1,40 @@
+import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
-import { SESSION_COOKIE, verifySessionToken } from './lib/session.ts';
+import { SUPABASE_KEY, SUPABASE_URL } from './lib/supabase/config';
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/cron', '/api/health'];
+// Pages anyone can open. Everything else needs a signed-in user.
+const PUBLIC = [/^\/$/, /^\/login$/, /^\/signup$/, /^\/forgot$/, /^\/auth\//, /^\/r\//, /^\/api\/cron\//, /^\/api\/health$/];
 
-// Cheap signature check on every request. Route handlers that change data also
-// re-check the passcode version against the database (see lib/auth.ts).
 export async function proxy(request: NextRequest) {
+  let response = NextResponse.next({ request });
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_KEY, {
+    cookies: {
+      getAll: () => request.cookies.getAll(),
+      setAll: (toSet) => {
+        toSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        response = NextResponse.next({ request });
+        toSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+      },
+    },
+  });
+
+  // Refreshes the session cookie when needed and verifies the JWT.
+  const { data } = await supabase.auth.getClaims();
+  const signedIn = !!data?.claims?.sub;
   const { pathname, search } = request.nextUrl;
-  if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return NextResponse.next();
 
-  const valid = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value).catch(() => null);
-  if (valid) return NextResponse.next();
-
-  if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  const login = new URL('/login', request.url);
-  if (pathname !== '/') login.searchParams.set('next', pathname + search);
-  return NextResponse.redirect(login);
+  if (!signedIn && !PUBLIC.some((re) => re.test(pathname))) {
+    if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+    const login = new URL('/login', request.url);
+    login.searchParams.set('next', pathname + search);
+    return NextResponse.redirect(login);
+  }
+  if (signedIn && (pathname === '/login' || pathname === '/signup')) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
+  return response;
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest|robots.txt).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|manifest.webmanifest|robots.txt).*)'],
 };

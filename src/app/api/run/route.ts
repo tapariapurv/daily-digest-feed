@@ -1,22 +1,23 @@
 import { after } from 'next/server';
-import { denyUnlessAuthed, json } from '@/lib/api';
+import { json, withUser } from '@/lib/api';
 import { sql, type Run } from '@/lib/db';
-import { executeRun, startRun } from '@/lib/pipeline';
+import { executeRun, RunLimitError, startRun } from '@/lib/pipeline';
 
 export const maxDuration = 300;
 
 /** Kick off a run in the background and return its id; the client polls GET /api/run/[id]. */
-export async function POST() {
-  const denied = await denyUnlessAuthed();
-  if (denied) return denied;
-  const { run, started } = await startRun('manual');
-  if (started) after(() => executeRun(run.id));
-  return json({ run });
-}
+export const POST = withUser(async (user) => {
+  try {
+    const { run, started } = await startRun(user.id, 'manual');
+    if (started) after(() => executeRun(run.id, user.id));
+    return json({ run });
+  } catch (err) {
+    if (err instanceof RunLimitError) return json({ error: err.message }, 429);
+    throw err;
+  }
+});
 
-export async function GET() {
-  const denied = await denyUnlessAuthed();
-  if (denied) return denied;
-  const [run] = await sql<Run[]>`select * from runs order by started_at desc limit 1`;
+export const GET = withUser(async (user) => {
+  const [run] = await sql<Run[]>`select * from app.runs where user_id = ${user.id} order by started_at desc limit 1`;
   return json({ run: run ?? null });
-}
+});

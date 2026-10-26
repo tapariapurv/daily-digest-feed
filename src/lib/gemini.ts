@@ -18,6 +18,8 @@ export class GeminiError extends Error {
 }
 
 type GenerateOptions = {
+  /** A reader's own key; falls back to the shared GEMINI_API_KEY. */
+  apiKey?: string | null;
   system: string;
   prompt: string;
   schema: object;
@@ -27,7 +29,7 @@ type GenerateOptions = {
 };
 
 async function callModel(model: string, opts: GenerateOptions): Promise<unknown> {
-  const key = process.env.GEMINI_API_KEY;
+  const key = opts.apiKey || process.env.GEMINI_API_KEY;
   if (!key) throw new GeminiError('GEMINI_API_KEY is not set', 401);
   const res = await fetch(`${ENDPOINT}/${model}:generateContent`, {
     method: 'POST',

@@ -52,7 +52,10 @@ export async function startRun() {
   try {
     const res = await fetch('/api/run', { method: 'POST' });
     const body = (await res.json()) as { run?: Run; error?: string };
-    if (!res.ok || !body.run) throw new Error(body.error ?? `HTTP ${res.status}`);
+    if (!res.ok || !body.run) {
+      set({ run: null, message: body.error ?? `Couldn’t start (HTTP ${res.status})`, error: res.status !== 429 });
+      return;
+    }
     set({ run: body.run });
     if (pollTimer) clearTimeout(pollTimer);
     poll(body.run.id);
@@ -94,7 +97,7 @@ export function RunButton() {
   }, []);
 
   return (
-    <button type="button" className="btn" onClick={startRun} disabled={!!run} title="Fetch new posts and build an edition now">
+    <button type="button" className="btn btn-sm" onClick={startRun} disabled={!!run} title="Fetch new posts and build an edition now">
       {run ? <span className="pulse" aria-hidden /> : <span aria-hidden>↻</span>}
       {run ? 'Working' : 'Refresh'}
     </button>
