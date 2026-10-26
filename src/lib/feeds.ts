@@ -282,7 +282,22 @@ export type FeedFetchResult =
   | { notModified: true; etag: string | null; lastModified: string | null }
   | { notModified: false; feed: ParsedFeed; etag: string | null; lastModified: string | null };
 
+// Third-party mirrors we route to by default, and the origin feed to use when the mirror is down.
+const MIRROR_FALLBACK: Record<string, string> = { 'hnrss.org': 'https://news.ycombinator.com/rss' };
+
 export async function fetchFeed(feedUrl: string, cache: { etag: string | null; lastModified: string | null }): Promise<FeedFetchResult> {
+  try {
+    return await fetchFeedOnce(feedUrl, cache);
+  } catch (err) {
+    const fallback = MIRROR_FALLBACK[hostOf(feedUrl)];
+    if (!fallback) throw err;
+    const res = await fetchFeedOnce(fallback, { etag: null, lastModified: null });
+    // Don't store the fallback's cache validators against the mirror URL.
+    return { ...res, etag: cache.etag, lastModified: cache.lastModified };
+  }
+}
+
+async function fetchFeedOnce(feedUrl: string, cache: { etag: string | null; lastModified: string | null }): Promise<FeedFetchResult> {
   const headers: Record<string, string> = {};
   if (cache.etag) headers['if-none-match'] = cache.etag;
   if (cache.lastModified) headers['if-modified-since'] = cache.lastModified;
