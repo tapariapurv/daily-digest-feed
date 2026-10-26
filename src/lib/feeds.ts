@@ -186,11 +186,17 @@ export function findFeedLinks(html: string, baseUrl: string): string[] {
   return unique.sort((a, b) => Number(/comment/i.test(a)) - Number(/comment/i.test(b)));
 }
 
+const THROTTLED = new Set([419, 429, 503]);
+
 const COMMON_PATHS = ['/feed', '/rss', '/feed.xml', '/rss.xml', '/atom.xml', '/index.xml', '/feed.json', '/blog/feed', '/blog/rss.xml', '/feeds/posts/default'];
 
 async function tryFeed(url: string): Promise<{ feedUrl: string; feed: ParsedFeed } | null> {
   try {
-    const res = await fetchText(url, { timeoutMs: 8000 });
+    let res = await fetchText(url, { timeoutMs: 12_000 });
+    if (THROTTLED.has(res.status)) {
+      await new Promise((r) => setTimeout(r, 2500));
+      res = await fetchText(url, { timeoutMs: 12_000 });
+    }
     if (res.status >= 400 || !looksLikeFeed(res.text, res.contentType)) return null;
     const feed = parseFeedText(res.text, res.url);
     return { feedUrl: res.url, feed };
@@ -280,7 +286,13 @@ export async function fetchFeed(feedUrl: string, cache: { etag: string | null; l
   const headers: Record<string, string> = {};
   if (cache.etag) headers['if-none-match'] = cache.etag;
   if (cache.lastModified) headers['if-modified-since'] = cache.lastModified;
-  const res = await fetchText(feedUrl, { timeoutMs: 15_000, headers });
+  let res = await fetchText(feedUrl, { timeoutMs: 15_000, headers });
+  // Reddit, HN and others throttle bursts from cloud IPs; a polite pause usually clears it.
+  for (const delay of [2500, 6000]) {
+    if (!THROTTLED.has(res.status)) break;
+    await new Promise((r) => setTimeout(r, delay));
+    res = await fetchText(feedUrl, { timeoutMs: 15_000, headers });
+  }
   const etag = res.headers.get('etag');
   const lastModified = res.headers.get('last-modified');
   if (res.status === 304) return { notModified: true, etag: etag ?? cache.etag, lastModified: lastModified ?? cache.lastModified };
