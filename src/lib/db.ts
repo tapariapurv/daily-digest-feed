@@ -8,7 +8,7 @@ export const sql: postgres.Sql =
   globalForSql.__sql ??
   (globalForSql.__sql = postgres(process.env.DATABASE_URL ?? '', {
     prepare: false,
-    max: 4,
+    max: Number(process.env.DB_POOL_MAX) || 4,
     idle_timeout: 20,
     connect_timeout: 10,
     onnotice: () => {},

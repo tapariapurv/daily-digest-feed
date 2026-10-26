@@ -221,12 +221,7 @@ a {
 .dateline {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 0.9rem;
-}
-.dateline span + span::before {
-  content: '·';
-  margin-right: 0.9rem;
-  color: var(--rule);
+  gap: 0.35rem 1.4rem;
 }
 .paper-name {
   font-family: var(--font-display), serif;

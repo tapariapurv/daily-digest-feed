@@ -217,7 +217,12 @@ export function SourcesManager({ initial }: { initial: SourceView[] }) {
           {sources.map((s) => (
             <li key={s.id} className={`source${s.enabled ? '' : ' paused'}`}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`https://www.google.com/s2/favicons?domain=${hostOf(s.site_url ?? s.feed_url)}&sz=64`} alt="" loading="lazy" />
+              <img src={`https://www.google.com/s2/favicons?domain=${hostOf(s.site_url ?? s.feed_url)}&sz=64`} alt=""
+                loading="lazy"
+                onError={(e) => {
+                  e.currentTarget.style.visibility = 'hidden';
+                }}
+              />
               <div>
                 <div className="source-title">{s.title}</div>
                 <div className="source-sub">{hostOf(s.site_url ?? s.feed_url)}{s.kind !== 'feed' ? ` · ${s.kind}` : ''}</div>
