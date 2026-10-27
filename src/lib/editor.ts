@@ -1,5 +1,5 @@
 import type { EditionLayout } from './db.ts';
-import { generateJSON } from './gemini.ts';
+import { generateJSON, type AiAuth } from './ai.ts';
 import { truncate } from './text.ts';
 
 // ---------- Pass 1: summarise a batch of articles (shared by every reader) ----------
@@ -43,7 +43,7 @@ const SUMMARY_SCHEMA = {
   required: ['items'],
 };
 
-export async function summariseBatch(articles: ArticleInput[], opts: { knownTopics: string[]; apiKey?: string | null }) {
+export async function summariseBatch(articles: ArticleInput[], opts: { knownTopics: string[] } & AiAuth) {
   const system = [
     'You are the editor of a morning newsletter. You turn raw articles into crisp, trustworthy briefs.',
     '',
@@ -67,7 +67,7 @@ export async function summariseBatch(articles: ArticleInput[], opts: { knownTopi
     .filter(Boolean)
     .join('\n\n');
 
-  const { data, model } = await generateJSON<{ items: ArticleSummary[] }>({ system, prompt, schema: SUMMARY_SCHEMA, apiKey: opts.apiKey });
+  const { data, model } = await generateJSON<{ items: ArticleSummary[] }>({ system, prompt, schema: SUMMARY_SCHEMA, reader: opts.reader, onKeyFallback: opts.onKeyFallback });
   const ids = new Set(articles.map((a) => a.id));
   const items = (data.items ?? [])
     .filter((it) => ids.has(it.id) && typeof it.summary === 'string' && it.summary.trim())
@@ -107,7 +107,7 @@ const EDITION_SCHEMA = {
 
 export type EditionDraft = { headline: string | null; intro: string | null; layout: EditionLayout; model: string | null };
 
-export type EditionOptions = { interests: string; maxStories: number; briefly: boolean; apiKey?: string | null };
+export type EditionOptions = { interests: string; maxStories: number; briefly: boolean } & AiAuth;
 
 export async function assembleEdition(items: EditionInput[], opts: EditionOptions): Promise<EditionDraft> {
   if (!items.length) return { headline: null, intro: null, layout: { lead: [], sections: [], briefly: [] }, model: null };
@@ -132,7 +132,7 @@ export async function assembleEdition(items: EditionInput[], opts: EditionOption
   let draft: { headline?: string; intro?: string; lead?: number[]; sections?: { title: string; ids: number[] }[]; briefly?: number[] } = {};
   let model: string | null = null;
   try {
-    const res = await generateJSON<typeof draft>({ system, prompt, schema: EDITION_SCHEMA, temperature: 0.5, apiKey: opts.apiKey });
+    const res = await generateJSON<typeof draft>({ system, prompt, schema: EDITION_SCHEMA, temperature: 0.5, reader: opts.reader, onKeyFallback: opts.onKeyFallback });
     draft = res.data;
     model = res.model;
   } catch (err) {

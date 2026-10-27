@@ -1,9 +1,8 @@
 import { json, readJson, withUser } from '@/lib/api';
-import { decryptSecret } from '@/lib/crypto';
 import { sql, type Source } from '@/lib/db';
 import { resolveSource } from '@/lib/feeds';
 import { lookupSourceUrls } from '@/lib/lookup';
-import { refreshNextRun } from '@/lib/profiles';
+import { getReaderAi, refreshNextRun } from '@/lib/profiles';
 import { listSources, MAX_SOURCES_PER_USER } from '@/lib/sources';
 import { mapLimit } from '@/lib/text';
 
@@ -28,8 +27,7 @@ export const POST = withUser(async (user, request) => {
 
   // Plain names ("Stratechery", "Lenny's newsletter") are looked up with Gemini, then verified.
   const names = inputs.filter((i) => !looksLikeUrl(i));
-  const [profile] = await sql<{ gemini_key_enc: string | null }[]>`select gemini_key_enc from app.profiles where user_id = ${user.id}`;
-  const found = await lookupSourceUrls(names, decryptSecret(profile?.gemini_key_enc));
+  const found = await lookupSourceUrls(names, { reader: await getReaderAi(user.id) });
 
   const results = await mapLimit(inputs.slice(0, MAX_SOURCES_PER_USER - n), 5, async (input): Promise<AddResult> => {
     const target = looksLikeUrl(input) ? input : found.get(input);

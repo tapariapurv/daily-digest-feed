@@ -11,14 +11,16 @@ export function geminiModels(): string[] {
 
 export class GeminiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** True when any model refused because of quota / rate limits. */
+  readonly quota: boolean;
+  constructor(message: string, status: number, quota = false) {
     super(message);
     this.status = status;
+    this.quota = quota;
   }
 }
 
-type GenerateOptions = {
-  /** A reader's own key; falls back to the shared GEMINI_API_KEY. */
+export type GenerateOptions = {
   apiKey?: string | null;
   system: string;
   prompt: string;
@@ -66,8 +68,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Ask Gemini for structured JSON, walking down the model chain on overload,
  * rate limits, timeouts or bad output. Each model gets one quick retry.
  */
-export async function generateJSON<T>(opts: GenerateOptions): Promise<{ data: T; model: string }> {
+export const geminiGenerate = <T>(opts: GenerateOptions) => generateWithKey<T>(opts);
+
+async function generateWithKey<T>(opts: GenerateOptions): Promise<{ data: T; model: string }> {
   const errors: string[] = [];
+  let quota = false;
   for (const model of opts.models ?? geminiModels()) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -76,6 +81,7 @@ export async function generateJSON<T>(opts: GenerateOptions): Promise<{ data: T;
         const status = err instanceof GeminiError ? err.status : 0;
         const msg = err instanceof Error ? (err.name === 'TimeoutError' ? 'timed out' : err.message) : String(err);
         errors.push(`${model}: ${msg.slice(0, 160)}`);
+        if (status === 429 || /quota|rate limit|resource.?exhausted/i.test(msg)) quota = true;
         if (status === 401 || status === 403) throw new GeminiError(`Gemini rejected the API key: ${msg}`, status);
         // Not found / bad request / timeout: this model won't work now, move on.
         if (status === 404 || status === 400 || msg === 'timed out') break;
@@ -83,5 +89,5 @@ export async function generateJSON<T>(opts: GenerateOptions): Promise<{ data: T;
       }
     }
   }
-  throw new GeminiError(`All models failed — ${errors.join(' | ')}`, 503);
+  throw new GeminiError(`All models failed — ${errors.join(' | ')}`, 503, quota);
 }

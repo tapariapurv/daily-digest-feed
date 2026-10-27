@@ -1,4 +1,5 @@
 // Pure profile/preferences model — safe to import from client components.
+import type { AiConfig } from './providers.ts';
 
 export const TEMPLATES = [
   {
@@ -69,7 +70,9 @@ export type Profile = {
   reading: Reading;
   schedule: Schedule;
   email_delivery: boolean;
-  has_gemini_key: boolean;
+  ai: AiConfig;
+  has_ai_key: boolean;
+  ai_key_error: string | null;
   onboarded: boolean;
   next_run_at: string | null;
 };

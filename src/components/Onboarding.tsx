@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { EditionData } from '@/lib/editions';
 import type { Profile } from '@/lib/profile';
 import type { SourceView } from '@/lib/sources';
+import { AiProviderPicker } from './AiProviderPicker';
 import { DesignStudio } from './DesignStudio';
 import { ScheduleEditor } from './SettingsForm';
 import { SourcesManager } from './SourcesManager';
@@ -89,6 +90,14 @@ export function Onboarding({ profile, sources, sample, inboxReady }: { profile: 
               placeholder="e.g. Product manager in fintech. Care about AI, payments, startups and design. Skip sports and celebrity news."
             />
           </label>
+          <details className="panel">
+            <summary style={{ cursor: 'pointer' }}>
+              <strong>Optional: use your own AI key</strong> <span className="muted">— skip this and the shared free Gemini writes your paper.</span>
+            </summary>
+            <div style={{ marginTop: '1rem' }}>
+              <AiProviderPicker initial={profile} compact />
+            </div>
+          </details>
           <div>
             <button className="btn btn-primary" type="button" disabled={busy} onClick={() => next({ paper_name: name, interests })}>
               Continue →

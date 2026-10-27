@@ -7,6 +7,7 @@ import type { Run } from '@/lib/db';
 import { timeAgo } from '@/lib/format';
 import type { Profile, Schedule } from '@/lib/profile';
 import { createSupabaseBrowser } from '@/lib/supabase/browser';
+import { AiProviderPicker } from './AiProviderPicker';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -103,7 +104,6 @@ export function SettingsForm({ initial, mailReady, runs }: { initial: Profile; m
   const [schedule, setSchedule] = useState(initial.schedule);
   const [emailDelivery, setEmailDelivery] = useState(initial.email_delivery);
   const [interests, setInterests] = useState(initial.interests);
-  const [geminiKey, setGeminiKey] = useState('');
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [testState, setTestState] = useState<string | null>(null);
@@ -122,7 +122,6 @@ export function SettingsForm({ initial, mailReady, runs }: { initial: Profile; m
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       setNextRun(body.profile.next_run_at);
       setStatus({ ok: true, msg: 'Saved.' });
-      setGeminiKey('');
       router.refresh();
     } catch (err) {
       setStatus({ ok: false, msg: err instanceof Error ? err.message : String(err) });
@@ -198,33 +197,23 @@ export function SettingsForm({ initial, mailReady, runs }: { initial: Profile; m
         </p>
       </section>
 
-      <section className="panel stack">
-        <div>
-          <h2 className="panel-title">Your own Gemini key (optional)</h2>
-          <p className="panel-sub">
-            Summaries run on a shared free Google Gemini key. Add your own free key from{' '}
-            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-              Google AI Studio
-            </a>{' '}
-            to never wait on shared limits. It’s stored encrypted.
-          </p>
-        </div>
-        <input type="password" value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} placeholder={initial.has_gemini_key ? '•••••••• (saved — paste a new one to replace)' : 'Paste your API key'} autoComplete="off" />
-        {initial.has_gemini_key && (
-          <div>
-            <button type="button" className="btn btn-quiet btn-sm" onClick={() => save({ gemini_key: '' })}>
-              Remove my key
-            </button>
-          </div>
-        )}
-      </section>
-
       <div className="save-bar">
-        <button type="button" className="btn btn-primary" onClick={() => save(geminiKey ? { gemini_key: geminiKey } : {})} disabled={saving}>
+        <button type="button" className="btn btn-primary" onClick={() => save()} disabled={saving}>
           {saving ? 'Saving…' : 'Save settings'}
         </button>
         {status && <span className={`note ${status.ok ? 'ok-text' : 'error-text'}`}>{status.msg}</span>}
       </div>
+
+      <section className="panel stack">
+        <div>
+          <h2 className="panel-title">AI that writes your paper</h2>
+          <p className="panel-sub">
+            Summaries run on a shared free Google Gemini key by default. Bring your own key — Gemini, Groq, OpenRouter, Claude, OpenAI or any
+            OpenAI-compatible API — for your own limits and your choice of model.
+          </p>
+        </div>
+        <AiProviderPicker initial={initial} />
+      </section>
 
       <section className="panel stack">
         <h2 className="panel-title">Recent runs</h2>

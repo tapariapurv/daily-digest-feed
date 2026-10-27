@@ -1,4 +1,4 @@
-import { decryptSecret } from './crypto.ts';
+import type { AiAuth } from './ai.ts';
 import { sql, type Article, type Run, type Source } from './db.ts';
 import { assembleEdition, summariseBatch } from './editor.ts';
 import { extractArticle } from './extract.ts';
@@ -7,6 +7,7 @@ import { describeFetchError, fetchText } from './http.ts';
 import { fetchInbox, mailboxConfigured } from './mailbox.ts';
 import { sendEditionEmail } from './mailer.ts';
 import { normaliseDesign, normaliseReading } from './profile.ts';
+import { readerAiFrom } from './profiles.ts';
 import { extractLinks, pickArticleLinks, type PageLink } from './scrape.ts';
 import { chunk, dedupeKey, mapLimit, truncate } from './text.ts';
 
@@ -197,18 +198,27 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
   const deadline = opts.deadline ?? t0 + 230_000;
   const stats: RunStats = { sources: 0, failedSources: 0, newItems: 0, summarised: 0, cached: 0, queued: 0, editionItems: 0, extracted: 0 };
   const stage = (text: string) => sql`update app.runs set stage = ${text}, stats = ${sql.json(stats)} where id = ${runId}`;
-  const finish = (status: 'done' | 'error', text: string, extra: { error?: string; editionId?: number } = {}) => sql`
-    update app.runs set status = ${status}, stage = ${text}, stats = ${sql.json(stats)}, finished_at = now(),
-      error = ${extra.error ?? null}, edition_id = ${extra.editionId ?? null}
-    where id = ${runId}`;
+  // Set once the reader's own AI provider is known; recorded on the profile when the run ends.
+  let keyIssue: string | null = null;
+  let usesOwnKey = false;
+  const finish = async (status: 'done' | 'error', text: string, extra: { error?: string; editionId?: number } = {}) => {
+    await sql`
+      update app.runs set status = ${status}, stage = ${text}, stats = ${sql.json(stats)}, finished_at = now(),
+        error = ${extra.error ?? null}, edition_id = ${extra.editionId ?? null}
+      where id = ${runId}`;
+    if (usesOwnKey) await sql`update app.profiles set gemini_key_error = ${keyIssue} where user_id = ${userId}`;
+  };
 
   try {
-    const [profile] = await sql<{ interests: string; reading: object; design: object; gemini_key_enc: string | null; email_delivery: boolean }[]>`
-      select interests, reading, design, gemini_key_enc, email_delivery from app.profiles where user_id = ${userId}`;
+    const [profile] = await sql<{ interests: string; reading: object; design: object; ai: object; gemini_key_enc: string | null; email_delivery: boolean }[]>`
+      select interests, reading, design, ai, gemini_key_enc, email_delivery from app.profiles where user_id = ${userId}`;
     if (!profile) throw new Error('Profile not found');
     const reading = normaliseReading(profile.reading);
     const design = normaliseDesign(profile.design);
-    const apiKey = decryptSecret(profile.gemini_key_enc);
+    // The reader's own AI provider, if any; problems with it are recorded and the shared key takes over.
+    const reader = readerAiFrom(profile.ai, profile.gemini_key_enc);
+    usesOwnKey = !!reader;
+    const ai: AiAuth = { reader, onKeyFallback: (reason) => (keyIssue = reason) };
 
     // 1. Fetch every enabled source.
     const sources = await sql<Source[]>`select * from app.sources where user_id = ${userId} and enabled order by created_at`;
@@ -233,7 +243,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
         }
       });
       const ok = fetched.filter((f): f is { source: Source; links: PageLink[] } => 'links' in f);
-      const picked = await pickArticleLinks(ok.map((f) => ({ key: f.source.id, url: f.source.feed_url, links: f.links })), apiKey);
+      const picked = await pickArticleLinks(ok.map((f) => ({ key: f.source.id, url: f.source.feed_url, links: f.links })), ai);
       pageResults = await mapLimit(fetched, 3, async (f) => {
         if ('error' in f && f.error) {
           await markSource(f.source, { error: f.error });
@@ -290,7 +300,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
               published: a.published_at ? new Date(a.published_at).toISOString().slice(0, 10) : null,
               content: a.content ?? '',
             })),
-            { knownTopics, apiKey },
+            { knownTopics, ...ai },
           );
           if (items.length) {
             await sql`
@@ -343,7 +353,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
         tldr: a.tldr ?? a.summary ?? '',
         published: a.published_at ? new Date(a.published_at).toISOString().slice(0, 10) : null,
       })),
-      { interests: profile.interests, maxStories: reading.maxStories, briefly: reading.briefly, apiKey },
+      { interests: profile.interests, maxStories: reading.maxStories, briefly: reading.briefly, ...ai },
     );
     const chosen = [...draft.layout.lead, ...draft.layout.sections.flatMap((s) => s.ids), ...draft.layout.briefly];
     const byId = new Map(ready.map((a) => [a.id, a]));

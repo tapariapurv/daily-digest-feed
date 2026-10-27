@@ -1,6 +1,6 @@
 // Sources without a feed: read the page, find links that are individual articles
 // (with Gemini's help), then read those articles directly.
-import { generateJSON } from './gemini.ts';
+import { generateJSON, type AiAuth } from './ai.ts';
 import { canonicalUrl, collapse, hostOf } from './text.ts';
 
 export type PageLink = { url: string; text: string };
@@ -74,7 +74,7 @@ export type PageCandidates = { key: string; url: string; links: PageLink[] };
  * One Gemini call for every feedless source in a run: which links are individual
  * articles (newest first)? Falls back to the heuristic if the model is unavailable.
  */
-export async function pickArticleLinks(pages: PageCandidates[], apiKey?: string | null, max = 12): Promise<Map<string, PageLink[]>> {
+export async function pickArticleLinks(pages: PageCandidates[], ai: AiAuth = {}, max = 12): Promise<Map<string, PageLink[]>> {
   const result = new Map<string, PageLink[]>();
   const fallback = () => {
     for (const p of pages) result.set(p.key, heuristicArticleLinks(p.links).slice(0, max));
@@ -83,7 +83,7 @@ export async function pickArticleLinks(pages: PageCandidates[], apiKey?: string 
   if (!pages.length) return result;
   try {
     const { data } = await generateJSON<{ pages: { key: string; article_link_numbers: number[] }[] }>({
-      apiKey,
+      ...ai,
       models: ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.5-flash'],
       timeoutMs: 45_000,
       system: [

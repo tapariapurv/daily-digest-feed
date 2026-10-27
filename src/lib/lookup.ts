@@ -1,16 +1,16 @@
-import { generateJSON } from './gemini.ts';
+import { generateJSON, type AiAuth } from './ai.ts';
 
 /**
  * Turn names people type ("Stratechery", "Lenny's newsletter", "Veritasium") into
  * official web addresses. Every suggestion is then verified by resolveSource, so a
  * wrong guess fails loudly instead of adding the wrong thing.
  */
-export async function lookupSourceUrls(names: string[], apiKey?: string | null): Promise<Map<string, string | null>> {
+export async function lookupSourceUrls(names: string[], ai: AiAuth = {}): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>(names.map((n) => [n, null]));
   if (!names.length) return out;
   try {
     const { data } = await generateJSON<{ results: { name: string; url: string }[] }>({
-      apiKey,
+      ...ai,
       models: ['gemini-3.5-flash', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'],
       timeoutMs: 40_000,
       temperature: 0,
