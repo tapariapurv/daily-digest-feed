@@ -18,6 +18,7 @@ function friendly(message: string): string {
   if (/email not confirmed/i.test(message)) return 'Confirm your email first — check your inbox for the link.';
   if (/already registered|already been registered/i.test(message)) return 'There’s already an account with that email — sign in instead.';
   if (/not authorized|sending.*email/i.test(message)) return 'We couldn’t send email to that address right now. Please contact the site owner.';
+  if (/email rate limit/i.test(message)) return 'We’ve sent too many emails this hour — please try again later.';
   if (/rate limit/i.test(message)) return 'Too many attempts — wait a minute and try again.';
   return message;
 }
