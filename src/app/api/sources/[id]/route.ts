@@ -42,6 +42,7 @@ export const PATCH = withUser<Ctx>(async (user, request, ctx) => {
 export const DELETE = withUser<Ctx>(async (user, _request, ctx) => {
   const { id } = await ctx.params;
   // The ledger keeps source_title, so past editions stay intact.
-  await sql`delete from app.sources where id = ${id} and user_id = ${user.id}`;
+  const deleted = await sql`delete from app.sources where id = ${id} and user_id = ${user.id} returning id`;
+  if (!deleted.length) return json({ error: 'Not found' }, 404);
   return json({ sources: await listSources(user.id) });
 });

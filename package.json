@@ -18,7 +18,9 @@
     "@rowanmanning/feed-parser": "^2.1.5",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
+    "imapflow": "^2.9.1",
     "linkedom": "^0.18.14",
+    "mailparser": "^3.12.4",
     "next": "^16.4.3",
     "nodemailer": "^10.2.1",
     "postgres": "^3.4.9",
@@ -26,6 +28,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^22.20.5",
     "@types/nodemailer": "^8.0.2",
     "@types/react": "^19.3.0",

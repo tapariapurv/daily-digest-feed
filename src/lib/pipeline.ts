@@ -4,6 +4,7 @@ import { assembleEdition, summariseBatch } from './editor.ts';
 import { extractArticle } from './extract.ts';
 import { fetchFeed, type ParsedItem } from './feeds.ts';
 import { describeFetchError, fetchText } from './http.ts';
+import { fetchInbox, mailboxConfigured } from './mailbox.ts';
 import { sendEditionEmail } from './mailer.ts';
 import { normaliseDesign, normaliseReading } from './profile.ts';
 import { extractLinks, pickArticleLinks, type PageLink } from './scrape.ts';
@@ -54,7 +55,7 @@ export async function startRun(userId: string, trigger: string): Promise<{ run: 
   return { run: running, started: false };
 }
 
-type NewItem = ParsedItem & { status: 'pending' | 'skipped' };
+type NewItem = ParsedItem & { status: 'pending' | 'skipped'; html?: string | null };
 
 /** Upsert articles into the shared table and record them in this reader's seen-ledger. Returns how many are new + pending. */
 async function recordItems(source: Source, items: NewItem[]): Promise<number> {
@@ -68,6 +69,7 @@ async function recordItems(source: Source, items: NewItem[]): Promise<number> {
     published_at: item.published,
     image_url: item.image,
     content: item.status === 'pending' && item.content ? truncate(item.content, 12_000) : null,
+    body_html: item.html ?? null,
     status: item.status,
   }));
   const unique = [...new Map(rows.map((r) => [r.dedupe_key, r])).values()];
@@ -92,7 +94,7 @@ async function recordItems(source: Source, items: NewItem[]): Promise<number> {
   return inserted.filter((r) => r.status === 'pending').length;
 }
 
-function choose(items: ParsedItem[], firstTime: boolean, perSource: number): NewItem[] {
+function choose<T extends ParsedItem>(items: T[], firstTime: boolean, perSource: number): (T & NewItem)[] {
   const now = Date.now();
   const sorted = items
     .map((item, index) => ({ item, index }))
@@ -104,7 +106,7 @@ function choose(items: ParsedItem[], firstTime: boolean, perSource: number): New
     const age = item.published ? now - item.published.getTime() : null;
     const fresh = kept < cap && (age === null || age < (firstTime ? FIRST_FETCH_MAX_AGE : MAX_AGE));
     if (fresh) kept++;
-    return { ...item, status: fresh ? 'pending' : 'skipped' };
+    return { ...item, status: fresh ? ('pending' as const) : ('skipped' as const) };
   });
 }
 
@@ -122,6 +124,22 @@ async function markSource(source: Source, result: { error?: string; etag?: strin
 }
 
 /** Fetch one feed source and record unseen items. */
+/** Newsletter inbox: issues sent to the reader's private address since the last check. */
+async function ingestInboxSource(source: Source, perSource: number): Promise<{ newItems: number; error?: string }> {
+  if (!mailboxConfigured() || !source.inbox_email) return { newItems: 0, error: 'Email inbox isn’t set up on this server' };
+  try {
+    const since = new Date(Math.min(Date.now() - DAY, (source.last_success_at ? new Date(source.last_success_at).getTime() : Date.now()) - DAY));
+    const issues = await fetchInbox(source.inbox_email, since);
+    const newItems = await recordItems(source, choose(issues, false, Math.max(perSource, 5)));
+    await markSource(source, {});
+    return { newItems };
+  } catch (err) {
+    const error = describeFetchError(err);
+    await markSource(source, { error });
+    return { newItems: 0, error };
+  }
+}
+
 export async function ingestFeedSource(source: Source, perSource: number): Promise<{ newItems: number; error?: string }> {
   try {
     const res = await fetchFeed(source.feed_url, { etag: source.etag, lastModified: source.last_modified });
@@ -196,9 +214,11 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
     const sources = await sql<Source[]>`select * from app.sources where user_id = ${userId} and enabled order by created_at`;
     stats.sources = sources.length;
     await stage(`Checking ${sources.length} source${sources.length === 1 ? '' : 's'}`);
-    const feeds = sources.filter((s) => s.kind !== 'page');
+    const feeds = sources.filter((s) => s.kind !== 'page' && s.kind !== 'inbox');
     const pages = sources.filter((s) => s.kind === 'page');
+    const inboxes = sources.filter((s) => s.kind === 'inbox');
     const feedResults = await mapLimit(feeds, 6, (s) => ingestFeedSource(s, reading.perSource));
+    const inboxResults = await mapLimit(inboxes, 1, (s) => ingestInboxSource(s, reading.perSource));
 
     let pageResults: { newItems: number; error?: string }[] = [];
     if (pages.length) {
@@ -222,7 +242,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
         return ingestPageSource(f.source, picked.get(f.source.id) ?? [], reading.perSource);
       });
     }
-    const results = [...feedResults, ...pageResults];
+    const results = [...feedResults, ...inboxResults, ...pageResults];
     stats.failedSources = results.filter((r) => r.error).length;
     stats.newItems = results.reduce((n, r) => n + r.newItems, 0);
 
@@ -381,6 +401,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
 export async function prune(): Promise<void> {
   await sql`delete from app.runs where started_at < now() - interval '60 days'`;
   await sql`update app.articles set content = null where content is not null and created_at < now() - interval '3 days'`;
+  await sql`update app.articles set body_html = null where body_html is not null and created_at < now() - interval '90 days'`;
   // Articles nobody's ledger references any more.
   await sql`
     delete from app.articles a where a.created_at < now() - interval '120 days'

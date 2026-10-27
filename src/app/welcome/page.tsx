@@ -4,6 +4,7 @@ import { Paper } from '@/components/Paper';
 import { requireUser } from '@/lib/auth';
 import { getProfile } from '@/lib/profiles';
 import { SAMPLE_EDITION } from '@/lib/sample';
+import { mailboxConfigured } from '@/lib/mailbox';
 import { listSources } from '@/lib/sources';
 
 export const dynamic = 'force-dynamic';
@@ -19,7 +20,7 @@ export default async function WelcomePage() {
         <header className="topbar">
           <span className="wordmark">{profile.paper_name}</span>
         </header>
-        <Onboarding profile={profile} sources={sources} sample={SAMPLE_EDITION} />
+        <Onboarding profile={profile} sources={sources} sample={SAMPLE_EDITION} inboxReady={mailboxConfigured()} />
       </div>
     </Paper>
   );

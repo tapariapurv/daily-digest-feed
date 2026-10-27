@@ -7,7 +7,7 @@ import type { SourceView } from '@/lib/sources';
 
 type Result = { input: string; ok: boolean; duplicate?: boolean; title?: string; kind?: string; via?: string; error?: string };
 
-const KIND_LABEL: Record<string, string> = { page: 'Scanned page', youtube: 'YouTube', reddit: 'Reddit', newsletter: 'Newsletter' };
+const KIND_LABEL: Record<string, string> = { page: 'Scanned page', youtube: 'YouTube', reddit: 'Reddit', newsletter: 'Newsletter', inbox: 'Email inbox' };
 
 function ago(iso: string | null) {
   if (!iso) return 'never';
@@ -50,7 +50,17 @@ function Status({ s }: { s: SourceView }) {
   );
 }
 
-export function SourcesManager({ initial, compact, onChange }: { initial: SourceView[]; compact?: boolean; onChange?: (s: SourceView[]) => void }) {
+export function SourcesManager({
+  initial,
+  compact,
+  inboxReady,
+  onChange,
+}: {
+  initial: SourceView[];
+  compact?: boolean;
+  inboxReady: boolean;
+  onChange?: (s: SourceView[]) => void;
+}) {
   const [sources, setSourcesState] = useState(initial);
   const setSources = (s: SourceView[]) => {
     setSourcesState(s);
@@ -254,14 +264,27 @@ export function SourcesManager({ initial, compact, onChange }: { initial: Source
             </button>
           </div>
         ))}
-        {inbox && <p className="note ok-text">Inbox ready. Use it to sign up for newsletters — new issues appear in your next edition.</p>}
+        {inbox && <p className="note ok-text">Your address is ready. Subscribe to newsletters with it — new issues appear in your next edition.</p>}
         {inboxError && <p className="note error-text">{inboxError}</p>}
-        {!inboxes.length && (
+        {!inboxes.length && inboxReady && (
           <div>
             <button type="button" className="btn btn-primary" onClick={createInbox} disabled={!!adding}>
-              {adding === 'inbox' ? 'Creating…' : 'Create my newsletter inbox'}
+              {adding === 'inbox' ? 'Creating…' : 'Create my newsletter address'}
             </button>
           </div>
+        )}
+        {!inboxes.length && !inboxReady && (
+          <ol className="steps" style={{ margin: '0.4rem 0 0' }}>
+            <li>
+              Open{' '}
+              <a href="https://kill-the-newsletter.com" target="_blank" rel="noreferrer">
+                kill-the-newsletter.com
+              </a>
+              , type a name and press “Create feed” (free, no account).
+            </li>
+            <li>Subscribe to your newsletters with the email address it shows.</li>
+            <li>Paste the feed link it shows into “Add sources” above.</li>
+          </ol>
         )}
         <p className="hint">Substack, Beehiiv, Ghost and Buttondown newsletters don’t need this — paste their web address above instead.</p>
       </section>

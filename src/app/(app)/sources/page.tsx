@@ -1,5 +1,6 @@
 import { SourcesManager } from '@/components/SourcesManager';
 import { requireUser } from '@/lib/auth';
+import { mailboxConfigured } from '@/lib/mailbox';
 import { listSources } from '@/lib/sources';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +17,7 @@ export default async function SourcesPage() {
           <p className="lede">Where your paper gets its stories. Add, edit or pause anything, any time.</p>
         </div>
       </div>
-      <SourcesManager initial={sources} />
+      <SourcesManager initial={sources} inboxReady={mailboxConfigured()} />
     </div>
   );
 }

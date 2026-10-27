@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['linkedom', '@mozilla/readability'],
+  serverExternalPackages: ['linkedom', '@mozilla/readability', 'imapflow', 'mailparser', 'nodemailer'],
   poweredByHeader: false,
 };
 

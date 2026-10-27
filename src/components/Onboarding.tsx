@@ -17,7 +17,7 @@ async function saveProfile(patch: Record<string, unknown>) {
   return body.profile as Profile;
 }
 
-export function Onboarding({ profile, sources, sample }: { profile: Profile; sources: SourceView[]; sample: EditionData }) {
+export function Onboarding({ profile, sources, sample, inboxReady }: { profile: Profile; sources: SourceView[]; sample: EditionData; inboxReady: boolean }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(profile.paper_name);
   const [interests, setInterests] = useState(profile.interests);
@@ -103,7 +103,7 @@ export function Onboarding({ profile, sources, sample }: { profile: Profile; sou
             <h1 className="headline">Where should your news come from?</h1>
             <p className="lede">Type names, paste links, or tap a starter pack. You can change this any time.</p>
           </div>
-          <SourcesManager initial={sources} compact onChange={(s) => setCount(s.length)} />
+          <SourcesManager initial={sources} compact inboxReady={inboxReady} onChange={(s) => setCount(s.length)} />
           <div className="save-bar">
             <button className="btn btn-quiet" type="button" onClick={() => setStep(0)}>
               ← Back

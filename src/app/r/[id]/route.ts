@@ -16,5 +16,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       select ${user.id}, ${articleId}, ${edition} where exists (select 1 from app.user_articles where user_id = ${user.id} and article_id = ${articleId})
       on conflict (user_id, article_id) do update set read_at = now()`.catch(() => {});
   }
+  // Newsletter issues without a web version are read inside the app.
+  if (!/^https?:\/\//.test(article.url)) return NextResponse.redirect(new URL(`/read/${articleId}`, request.url), 302);
   return NextResponse.redirect(article.url, 302);
 }
