@@ -13,6 +13,8 @@ const SWATCH: Record<string, { bg: string; ink: string; font: string; glyph: str
   modern: { bg: '#ffffff', ink: '#111418', font: 'var(--f-bricolage), system-ui, sans-serif', glyph: 'Aa' },
   magazine: { bg: '#fffdf8', ink: '#151311', font: 'var(--f-playfair), Georgia, serif', glyph: 'Aa' },
   wire: { bg: '#0b0d0c', ink: '#d7e3d9', font: 'var(--f-jetbrains), monospace', glyph: '>_' },
+  paper: { bg: '#efe6d2', ink: '#2a2419', font: 'var(--f-sourceserif), Georgia, serif', glyph: 'Aa' },
+  leather: { bg: 'radial-gradient(circle at 30% 20%, #5a2a20, #2a120d)', ink: '#e8cf94', font: 'var(--f-playfair), Georgia, serif', glyph: 'Aa' },
 };
 
 function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {

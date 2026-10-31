@@ -8,7 +8,7 @@ const FEATURES = [
   { title: 'Paste anything', body: 'Blogs, news sites, Substack, YouTube, Reddit — or just type “Stratechery”. Sites without feeds are scanned for new articles.' },
   { title: 'Summarised, not skimmed', body: 'Every piece becomes a 2–3 sentence brief with the actual point — numbers, names, decisions — grouped by topic.' },
   { title: 'Never the same story twice', body: 'Everything you’ve seen is remembered. Tomorrow’s paper only has what’s new.' },
-  { title: 'Your paper, your way', body: 'Four templates, your colours, light or dark, quick or deep. Images on or off. Looks right on phone, iPad and desktop.' },
+  { title: 'Your paper, your way', body: 'Six templates — including leather-bound and cotton paper — your colours, light or dark, quick or deep. Images on or off. Looks right on phone, iPad and desktop.' },
   { title: 'On your schedule', body: 'Pick the time and days. It’s printed before you wake up — and can land in your inbox as a newsletter.' },
   { title: 'Email newsletters too', body: 'Get a private address for email-only newsletters; every issue flows into the same calm page.' },
 ];

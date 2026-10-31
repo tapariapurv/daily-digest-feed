@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createSupabaseBrowser } from '@/lib/supabase/browser';
 
 type Mode = 'login' | 'signup' | 'forgot' | 'reset';
@@ -29,7 +29,21 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [show, setShow] = useState(false);
+  const [sent, setSent] = useState(false);
   const copy = COPY[mode];
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('error') === 'link') setInfo('That link was opened in a different browser or has expired. If you just confirmed your email, sign in below.');
+  }, []);
+
+  async function resend() {
+    setError(null);
+    const { error } = await createSupabaseBrowser().auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=/welcome` } });
+    if (error) setError(friendly(error.message));
+    else setInfo('Sent again. It can take a minute — check spam too.');
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +72,16 @@ export function AuthForm({ mode }: { mode: Mode }) {
           window.location.href = '/welcome';
           return;
         }
-        setInfo('Almost done — we sent a confirmation link to your email. Open it on this device to start your paper.');
+        // Supabase answers a sign-up for an existing email with a fake user (no identities) and sends nothing.
+        if (data.user && !data.user.identities?.length) {
+          const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+          if (!signInError) {
+            window.location.href = '/';
+            return;
+          }
+          throw new Error('There’s already an account with that email. Sign in, or reset your password if you’ve forgotten it.');
+        }
+        setSent(true);
       }
       if (mode === 'forgot') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${origin}/auth/confirm?next=/auth/reset` });
@@ -78,9 +101,33 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setBusy(false);
   }
 
+  if (sent)
+    return (
+      <div className="auth-sent reveal">
+        <div className="auth-stamp" aria-hidden>✉</div>
+        <h1 className="headline auth-title">Check your inbox.</h1>
+        <p className="lede">
+          We sent a link to <strong>{email}</strong>. Open it in this browser and your paper starts setting up.
+        </p>
+        <div className="row" style={{ gap: '0.6rem', marginTop: '1.4rem' }}>
+          <a className="btn btn-primary" href="https://mail.google.com/mail/u/0/#search/from%3Asupabase+OR+%22Morning+Digest%22" target="_blank" rel="noreferrer">
+            Open Gmail
+          </a>
+          <button className="btn btn-quiet" type="button" onClick={resend}>
+            Resend link
+          </button>
+        </div>
+        {error && <p className="note error-text">{error}</p>}
+        {info && <p className="note ok-text">{info}</p>}
+        <p className="note" style={{ marginTop: '1.6rem' }}>
+          Wrong address? <button type="button" className="linkish" onClick={() => setSent(false)}>Use another email</button>
+        </p>
+      </div>
+    );
+
   return (
     <div>
-      <h1 className="headline" style={{ fontSize: 'clamp(2.4rem, 9vw, 3.4rem)' }}>
+      <h1 className="headline auth-title">
         {copy.title}
       </h1>
       <p className="lede" style={{ marginBottom: '1.6rem' }}>
@@ -96,14 +143,20 @@ export function AuthForm({ mode }: { mode: Mode }) {
         {mode !== 'forgot' && (
           <label className="field">
             <span>{mode === 'reset' ? 'New password' : 'Password'}</span>
+            <span className="pw">
             <input
-              type="password"
+              type={show ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               minLength={mode === 'login' ? undefined : 8}
               required
             />
+            <button type="button" className="pw-toggle" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide password' : 'Show password'}>
+              {show ? 'Hide' : 'Show'}
+            </button>
+            </span>
+            {mode !== 'login' && <small className="hint">At least 8 characters.</small>}
           </label>
         )}
         <button className="btn btn-primary btn-block" type="submit" disabled={busy}>

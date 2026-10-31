@@ -1,6 +1,12 @@
 // Curated starter packs for new readers. Each URL is resolved (and verified) on add.
 export const PACKS = [
   {
+    id: 'good',
+    name: 'Good News',
+    blurb: 'Reasons to be Cheerful, Good News Network, Optimist Daily, NASA, Atlas Obscura',
+    urls: ['https://reasonstobecheerful.world/feed/', 'https://www.goodnewsnetwork.org/feed/', 'https://www.optimistdaily.com/feed/', 'https://www.nasa.gov/feed/', 'https://www.atlasobscura.com/feeds/latest'],
+  },
+  {
     id: 'tech',
     name: 'Technology',
     blurb: 'The Verge, Ars Technica, Stratechery, Simon Willison, Hacker News',

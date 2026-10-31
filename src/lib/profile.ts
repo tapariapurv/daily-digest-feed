@@ -26,6 +26,18 @@ export const TEMPLATES = [
     blurb: 'Monospace, dense, headline-first. Maximum signal per scroll.',
     accent: '#15803d',
   },
+  {
+    id: 'paper',
+    name: 'Paper',
+    blurb: 'Cotton-rag stock, deckled margins, ink-stamp serif. Like a letter on your desk.',
+    accent: '#2f4a7a',
+  },
+  {
+    id: 'leather',
+    name: 'Leather',
+    blurb: 'Bound in oxblood leather with gilt type. A private library at dawn.',
+    accent: '#c9a45c',
+  },
 ] as const;
 
 export type TemplateId = (typeof TEMPLATES)[number]['id'];
