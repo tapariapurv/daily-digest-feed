@@ -1,10 +1,13 @@
+import { cookies } from 'next/headers';
 import { json, withUser } from '@/lib/api';
-import { sql } from '@/lib/db';
-import { createSupabaseServer } from '@/lib/supabase/server';
+import { adminAuth, db, profiles, user as userDoc } from '@/lib/db';
+import { SESSION_COOKIE } from '@/lib/firebase/config';
 
-/** Delete everything this reader stored (sources, editions, history). */
+/** Delete everything this reader stored (sources, editions, history) and the account itself. */
 export const DELETE = withUser(async (user) => {
-  await sql`delete from app.profiles where user_id = ${user.id}`;
-  await (await createSupabaseServer()).auth.signOut();
+  await db().recursiveDelete(userDoc(user.id));
+  await profiles().doc(user.id).delete();
+  await adminAuth().deleteUser(user.id).catch(() => {});
+  (await cookies()).delete(SESSION_COOKIE);
   return json({ ok: true });
 });

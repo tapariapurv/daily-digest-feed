@@ -1,9 +1,8 @@
 import { json, readJson, withUser } from '@/lib/api';
-import { sql, type Source } from '@/lib/db';
 import { resolveSource } from '@/lib/feeds';
 import { lookupSourceUrls } from '@/lib/lookup';
 import { getReaderAi, refreshNextRun } from '@/lib/profiles';
-import { listSources, MAX_SOURCES_PER_USER } from '@/lib/sources';
+import { addSource, listSources, MAX_SOURCES_PER_USER, sourcesOf } from '@/lib/sources';
 import { mapLimit } from '@/lib/text';
 
 export const maxDuration = 120;
@@ -22,7 +21,7 @@ export const POST = withUser(async (user, request) => {
   const inputs = [...new Set(raw)].slice(0, 40);
   if (!inputs.length) return json({ error: 'Type or paste at least one source.' }, 400);
 
-  const [{ n }] = await sql<{ n: number }[]>`select count(*)::int as n from app.sources where user_id = ${user.id}`;
+  const n = (await sourcesOf(user.id).count().get()).data().count;
   if (n >= MAX_SOURCES_PER_USER) return json({ error: `You can follow up to ${MAX_SOURCES_PER_USER} sources.` }, 400);
 
   // Plain names ("Stratechery", "Lenny's newsletter") are looked up with Gemini, then verified.
@@ -34,14 +33,11 @@ export const POST = withUser(async (user, request) => {
     if (!target) return { input, ok: false, error: 'Couldn’t find a website for that name — try pasting its link.' };
     try {
       const resolved = await resolveSource(target);
-      const inserted = await sql<Source[]>`
-        insert into app.sources (user_id, input_url, feed_url, site_url, title, kind)
-        values (${user.id}, ${target}, ${resolved.feedUrl}, ${resolved.siteUrl}, ${resolved.title.slice(0, 200)}, ${resolved.kind})
-        on conflict (user_id, feed_url) do nothing returning *`;
+      const inserted = await addSource(user.id, { input_url: target, feed_url: resolved.feedUrl, site_url: resolved.siteUrl, title: resolved.title.slice(0, 200), kind: resolved.kind });
       return {
         input,
         ok: true,
-        duplicate: !inserted.length,
+        duplicate: !inserted,
         title: resolved.title,
         feedUrl: resolved.feedUrl,
         kind: resolved.kind,

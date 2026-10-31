@@ -1,5 +1,7 @@
 import Link from 'next/link';
-import { sql, type Run } from '@/lib/db';
+import { rows, type Run } from '@/lib/db';
+import { runsOf } from '@/lib/pipeline';
+import { sourcesOf } from '@/lib/sources';
 import { getEditionData } from '@/lib/editions';
 import type { Profile } from '@/lib/profile';
 import { Edition } from './Edition';
@@ -10,9 +12,9 @@ const HOUR = 3600_000;
 export async function Today({ profile }: { profile: Profile }) {
   const userId = profile.user_id;
   const [[{ n: sourceCount }], data, [lastRun]] = await Promise.all([
-    sql<{ n: number }[]>`select count(*)::int as n from app.sources where user_id = ${userId} and enabled`,
+    sourcesOf(userId).where('enabled', '==', true).count().get().then((c) => [{ n: c.data().count }]),
     getEditionData(userId),
-    sql<Run[]>`select * from app.runs where user_id = ${userId} order by started_at desc limit 1`,
+    runsOf(userId).orderBy('started_at', 'desc').limit(1).get().then((s) => rows<Run>(s)),
   ]);
 
   if (!sourceCount && !data) {

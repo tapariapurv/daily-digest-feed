@@ -1,5 +1,5 @@
 import { json } from '@/lib/api';
-import { sql } from '@/lib/db';
+import { profiles } from '@/lib/db';
 import { mailConfigured } from '@/lib/mailer';
 
 export const dynamic = 'force-dynamic';
@@ -8,13 +8,12 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const checks: Record<string, string> = {
     gemini: process.env.GEMINI_API_KEY ? 'configured' : 'missing',
-    cron: process.env.CRON_SECRET ? 'configured' : 'missing',
+    firebase: process.env.FIREBASE_SERVICE_ACCOUNT ? 'configured' : 'missing',
     email: mailConfigured() ? 'configured' : 'not configured',
   };
   try {
-    const [row] = await sql<{ users: number; editions: number }[]>`
-      select (select count(*)::int from app.profiles) as users, (select count(*)::int from app.editions) as editions`;
-    checks.database = `ok (${row.users} readers, ${row.editions} editions)`;
+    const users = (await profiles().count().get()).data().count;
+    checks.database = `ok (${users} readers)`;
   } catch (err) {
     checks.database = `error: ${err instanceof Error ? err.message : String(err)}`;
   }

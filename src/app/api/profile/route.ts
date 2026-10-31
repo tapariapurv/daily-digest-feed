@@ -1,9 +1,8 @@
 import { json, readJson, withUser } from '@/lib/api';
 import { AiError, listModels } from '@/lib/ai';
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
-import { sql } from '@/lib/db';
 import { normaliseDesign, normaliseReading, normaliseSchedule, type Design, type Reading, type Schedule } from '@/lib/profile';
-import { getProfile, getProfileRow, refreshNextRun } from '@/lib/profiles';
+import { getProfile, getProfileRow, refreshNextRun, updateProfile } from '@/lib/profiles';
 import { normaliseAi, providerInfo, type AiConfig } from '@/lib/providers';
 
 export const maxDuration = 30;
@@ -30,7 +29,7 @@ export const PUT = withUser(async (user, request) => {
   if (body.ai) {
     const ai = normaliseAi(body.ai);
     if (ai.provider === 'shared') {
-      await sql`update app.profiles set ai = ${sql.json(ai)}, gemini_key_enc = null, gemini_key_error = null where user_id = ${user.id}`;
+      await updateProfile(user.id, { ai, gemini_key_enc: null, gemini_key_error: null });
     } else {
       const row = await getProfileRow(user.id);
       const typed = typeof body.ai_key === 'string' ? body.ai_key.trim() : '';
@@ -46,9 +45,7 @@ export const PUT = withUser(async (user, request) => {
       }
       if (!ai.model) return json({ error: 'Choose a model.' }, 400);
       if (models.length && !models.includes(ai.model)) return json({ error: `That key can’t use “${ai.model}”. Pick one from the list.` }, 400);
-      await sql`
-        update app.profiles set ai = ${sql.json(ai)}, gemini_key_enc = ${apiKey ? encryptSecret(apiKey) : null}, gemini_key_error = null
-        where user_id = ${user.id}`;
+      await updateProfile(user.id, { ai, gemini_key_enc: apiKey ? encryptSecret(apiKey) : null, gemini_key_error: null });
     }
   }
 
@@ -61,11 +58,7 @@ export const PUT = withUser(async (user, request) => {
     email_delivery: typeof body.email_delivery === 'boolean' ? body.email_delivery : current.email_delivery,
     onboarded: body.onboarded === true ? true : current.onboarded,
   };
-  await sql`
-    update app.profiles set paper_name = ${next.paper_name}, interests = ${next.interests},
-      design = ${sql.json(next.design)}, reading = ${sql.json(next.reading)}, schedule = ${sql.json(next.schedule)},
-      email_delivery = ${next.email_delivery}, onboarded = ${next.onboarded}, updated_at = now()
-    where user_id = ${user.id}`;
+  await updateProfile(user.id, next);
   await refreshNextRun(user.id);
   return json({ profile: await getProfile(user.id) });
 });

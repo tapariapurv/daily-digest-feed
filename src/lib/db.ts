@@ -1,23 +1,63 @@
-import postgres from 'postgres';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore';
+import { createHash } from 'node:crypto';
 
-// One small pool per warm function instance. `prepare: false` is required by
-// Supabase's transaction pooler (port 6543). All app tables live in the private `app` schema.
-const globalForSql = globalThis as unknown as { __sql?: postgres.Sql };
+// Server-only. FIREBASE_SERVICE_ACCOUNT holds the service-account JSON; Firestore rules deny all
+// client access, so every read and write goes through here, scoped by the signed-in user's uid.
+function app() {
+  if (getApps()[0]) return getApps()[0];
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  return initializeApp(raw ? { credential: cert(JSON.parse(raw)) } : { projectId: 'daily-digest-feed' });
+}
 
-export const sql: postgres.Sql =
-  globalForSql.__sql ??
-  (globalForSql.__sql = postgres(process.env.DATABASE_URL ?? '', {
-    prepare: false,
-    max: Number(process.env.DB_POOL_MAX) || 4,
-    idle_timeout: 20,
-    connect_timeout: 10,
-    onnotice: () => {},
-    // Our bigint identity ids stay far below 2^53, so treat int8 as a plain number.
-    types: {
-      bigint: { to: 20, from: [20], serialize: (x: number) => String(x), parse: (x: string) => Number(x) },
-    },
-  }));
+const g = globalThis as unknown as { __db?: Firestore };
+export function db(): Firestore {
+  if (!g.__db) {
+    g.__db = getFirestore(app());
+    g.__db.settings({ ignoreUndefinedProperties: true });
+  }
+  return g.__db;
+}
+export const adminAuth = () => getAuth(app());
+export { FieldValue };
 
+export const user = (uid: string) => db().collection('users').doc(uid);
+export const profiles = () => db().collection('profiles');
+export const articles = () => db().collection('articles');
+
+/** Firestore Timestamps back to Dates (top level and one level of nesting is all we store). */
+export function data<T>(snap: DocumentSnapshot): T {
+  const out: Record<string, unknown> = { ...snap.data() };
+  for (const [k, v] of Object.entries(out)) if (v instanceof Timestamp) out[k] = v.toDate();
+  return out as T;
+}
+export const rows = <T>(snaps: { docs: DocumentSnapshot[] }) => snaps.docs.map((d) => data<T>(d));
+
+/** Stable numeric article id from its dedupe key (52 bits: safe integer, collisions negligible). */
+export const articleId = (dedupeKey: string) => parseInt(createHash('sha256').update(dedupeKey).digest('hex').slice(0, 13), 16);
+/** Increasing numeric id for editions and runs. */
+export const newId = () => Date.now() * 1000 + Math.floor(Math.random() * 1000);
+
+/** Fetch many docs by id (Firestore caps getAll; chunk to be safe). */
+export async function getMany<T>(ref: FirebaseFirestore.CollectionReference, ids: (string | number)[]): Promise<T[]> {
+  const out: T[] = [];
+  const unique = [...new Set(ids.map(String))];
+  for (let i = 0; i < unique.length; i += 300) {
+    const snaps = await db().getAll(...unique.slice(i, i + 300).map((id) => ref.doc(id)));
+    for (const s of snaps) if (s.exists) out.push(data<T>(s));
+  }
+  return out;
+}
+
+/** Write many updates in batches of 400. */
+export async function commitAll(ops: ((b: FirebaseFirestore.WriteBatch) => void)[]) {
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = db().batch();
+    ops.slice(i, i + 400).forEach((op) => op(batch));
+    await batch.commit();
+  }
+}
 export type Source = {
   id: string;
   user_id: string;
@@ -37,7 +77,12 @@ export type Source = {
   consecutive_failures: number;
 };
 
+export type LedgerStatus = 'pending' | 'done' | 'skipped' | 'failed';
+/** users/{uid}/ledger/{articleId}: everything this reader has seen — the no-duplicates guarantee. */
+export type LedgerEntry = { article_id: number; source_id: string | null; source_title: string; status: LedgerStatus; edition_id: number | null; seen_at: Date };
+
 export type Article = {
+  body_html?: string | null;
   id: number;
   dedupe_key: string;
   url: string;

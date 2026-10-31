@@ -2,11 +2,11 @@
 
 Your morning paper, written from everything you follow. Anyone can sign up, add the blogs, newsletters, channels and sites they read, and get a calm, AI-summarised edition on their own schedule — on the web (phone, iPad, desktop) and by email.
 
-Runs entirely on free tiers: **Vercel Hobby** (hosting), **Supabase Free** (Auth, Postgres, pg_cron scheduler), **Google AI Studio** (Gemini), **Gmail SMTP** (optional email delivery).
+Runs entirely on free tiers: **Vercel Hobby** (hosting), **Firebase Spark** (Auth with email/password + Google, Firestore), **Google Apps Script** (10-minute scheduler), **Google AI Studio** (Gemini), **Gmail SMTP** (optional email delivery).
 
 ## Features
 
-- **Accounts** — Supabase Auth (email + password, reset links). Each reader has their own sources, editions, design, schedule and history.
+- **Accounts** — Firebase Auth (email + password or Google; no confirmation email needed; reset links). Each reader has their own sources, editions, design, schedule and history.
 - **Add sources any way** — paste links, type names ("Stratechery", "Lenny's newsletter" — looked up with Gemini and verified), import OPML, or tap a starter pack. Feeds are discovered automatically; sites **without** a feed are scanned: Gemini picks the article links off the page and each article is read directly.
 - **Email-only newsletters** — one click creates a private inbox (via kill-the-newsletter.com); issues sent there flow into the paper.
 - **Summaries** — every article gets a one-line TL;DR, a 2–3 sentence summary, key points, a topic and a quality score. Summaries are **shared across readers**: an article is summarised once no matter how many people follow it, which keeps a single free Gemini key viable.
@@ -22,7 +22,7 @@ Runs entirely on free tiers: **Vercel Hobby** (hosting), **Supabase Free** (Auth
 ## Architecture
 
 ```
-Supabase pg_cron (every 10 min) ─┐
+Apps Script trigger (every 10 min) ─┐
 Vercel Cron (daily backstop) ────┼─► /api/cron/tick ─► due readers ─► executeRun(reader)
 "Refresh" / first open ──────────┘
 executeRun: fetch feeds + scan feedless pages (Gemini picks links)
@@ -32,7 +32,7 @@ executeRun: fetch feeds + scan feedless pages (Gemini picks links)
           → Gemini pass 2 (reader's interests + length) → app.editions → optional email
 ```
 
-All tables live in the private `app` schema (not exposed by Supabase's Data API). The server connects as a restricted `digest_app` role and scopes every query by the signed-in user's id from Supabase Auth. Schema: `supabase/migrations/`.
+Firestore rules deny all client access; the server reads and writes through `firebase-admin`, scoped by the signed-in uid from an httpOnly session cookie. Layout: `profiles/{uid}`, shared `articles/{id}`, and per-reader `users/{uid}/{sources,ledger,editions,runs,reads,saved}`. Scheduler: `scheduler/` (clasp).
 
 ## Environment
 

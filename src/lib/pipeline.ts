@@ -1,5 +1,7 @@
 import type { AiAuth } from './ai.ts';
-import { sql, type Article, type Run, type Source } from './db.ts';
+import { articleId, articles, commitAll, data, db, FieldValue, getMany, newId, profiles, rows, user, type Article, type LedgerEntry, type Run, type Source } from './db.ts';
+import { editionsOf } from './editions.ts';
+import { ledgerOf, sourcesOf } from './sources.ts';
 import { assembleEdition, summariseBatch } from './editor.ts';
 import { extractArticle } from './extract.ts';
 import { fetchFeed, type ParsedItem } from './feeds.ts';
@@ -7,7 +9,7 @@ import { describeFetchError, fetchText } from './http.ts';
 import { fetchInbox, mailboxConfigured } from './mailbox.ts';
 import { sendEditionEmail } from './mailer.ts';
 import { normaliseDesign, normaliseReading } from './profile.ts';
-import { readerAiFrom } from './profiles.ts';
+import { readerAiFrom, type ProfileRow } from './profiles.ts';
 import { extractLinks, pickArticleLinks, type PageLink } from './scrape.ts';
 import { chunk, dedupeKey, mapLimit, truncate } from './text.ts';
 
@@ -38,22 +40,26 @@ export type RunStats = {
 
 export class RunLimitError extends Error {}
 
-/** Start a run for one reader unless one is already in progress (unique partial index). */
+export const runsOf = (userId: string) => user(userId).collection('runs');
+
+/** Start a run for one reader unless one is already in progress. */
 export async function startRun(userId: string, trigger: string): Promise<{ run: Run; started: boolean }> {
-  await sql`
-    update app.runs set status = 'error', error = 'Timed out', finished_at = now()
-    where user_id = ${userId} and status = 'running' and started_at < now() - interval '6 minutes'`;
+  const runs = runsOf(userId);
+  const recent = rows<Run>(await runs.where('started_at', '>', new Date(Date.now() - 86400_000)).get());
+  for (const r of recent)
+    if (r.status === 'running' && Date.now() - new Date(r.started_at).getTime() > 6 * 60_000)
+      await runs.doc(String(r.id)).update({ status: 'error', error: 'Timed out', finished_at: new Date() });
+  const stale = await runs.where('started_at', '<', new Date(Date.now() - 60 * 86400_000)).limit(20).select().get();
+  await commitAll(stale.docs.map((d) => (b: FirebaseFirestore.WriteBatch) => b.delete(d.ref)));
+  const running = recent.find((r) => r.status === 'running' && Date.now() - new Date(r.started_at).getTime() <= 6 * 60_000);
+  if (running) return { run: running, started: false };
   if (trigger === 'manual') {
-    const [{ n }] = await sql<{ n: number }[]>`
-      select count(*)::int as n from app.runs where user_id = ${userId} and trigger = 'manual' and started_at > now() - interval '1 day'`;
+    const n = recent.filter((r) => r.trigger === 'manual').length;
     if (n >= MANUAL_RUNS_PER_DAY) throw new RunLimitError(`You’ve refreshed ${n} times today — the next scheduled edition will pick up anything new.`);
   }
-  const inserted = await sql<Run[]>`
-    insert into app.runs (user_id, trigger, stage) values (${userId}, ${trigger}, 'Starting')
-    on conflict do nothing returning *`;
-  if (inserted[0]) return { run: inserted[0], started: true };
-  const [running] = await sql<Run[]>`select * from app.runs where user_id = ${userId} and status = 'running' limit 1`;
-  return { run: running, started: false };
+  const run: Run = { id: newId(), user_id: userId, started_at: new Date(), finished_at: null, trigger, status: 'running', stage: 'Starting', stats: {}, error: null, edition_id: null };
+  await runs.doc(String(run.id)).set(run);
+  return { run, started: true };
 }
 
 type NewItem = ParsedItem & { status: 'pending' | 'skipped'; html?: string | null };
@@ -73,26 +79,29 @@ async function recordItems(source: Source, items: NewItem[]): Promise<number> {
     body_html: item.html ?? null,
     status: item.status,
   }));
-  const unique = [...new Map(rows.map((r) => [r.dedupe_key, r])).values()];
-  await sql`
-    insert into app.articles ${sql(unique.map(({ status: _status, ...article }) => article))}
-    on conflict (dedupe_key) do update set
-      image_url = coalesce(app.articles.image_url, excluded.image_url),
-      content = excluded.content
-    where (app.articles.image_url is null and excluded.image_url is not null)
-       or (app.articles.summary is null and length(coalesce(excluded.content, '')) > length(coalesce(app.articles.content, '')))`;
-  const ids = await sql<{ id: number; dedupe_key: string }[]>`
-    select id, dedupe_key from app.articles where dedupe_key = any(${unique.map((r) => r.dedupe_key)})`;
-  const idByKey = new Map(ids.map((r) => [r.dedupe_key, r.id]));
-  const ledger = unique
-    .filter((r) => idByKey.has(r.dedupe_key))
-    .map((r) => ({ user_id: source.user_id, article_id: idByKey.get(r.dedupe_key)!, source_id: source.id, source_title: source.title, status: r.status }));
-  // Anything this reader has seen before hits the primary key and is ignored — the no-duplicates guarantee.
-  const inserted = await sql<{ status: string }[]>`
-    insert into app.user_articles ${sql(ledger)}
-    on conflict (user_id, article_id) do nothing
-    returning status`;
-  return inserted.filter((r) => r.status === 'pending').length;
+  const unique = [...new Map(rows.map((r) => [r.dedupe_key, { ...r, id: articleId(r.dedupe_key) }])).values()];
+  const existing = new Map((await getMany<Article>(articles(), unique.map((r) => r.id))).map((a) => [a.id, a]));
+  const seen = new Set((await getMany<LedgerEntry>(ledgerOf(source.user_id), unique.map((r) => r.id))).map((l) => l.article_id));
+  const now = new Date();
+  const ops: ((b: FirebaseFirestore.WriteBatch) => void)[] = [];
+  for (const { status, ...article } of unique) {
+    const ref = articles().doc(String(article.id));
+    const old = existing.get(article.id);
+    if (!old) ops.push((b) => b.set(ref, { ...article, key_points: null, topic: null, tldr: null, summary: null, quality: null, summarized_at: null, summary_attempts: 0, created_at: now }));
+    else {
+      const patch: Record<string, unknown> = {};
+      if (!old.image_url && article.image_url) patch.image_url = article.image_url;
+      if (!old.summary && (article.content?.length ?? 0) > (old.content?.length ?? 0)) patch.content = article.content;
+      if (Object.keys(patch).length) ops.push((b) => b.update(ref, patch));
+    }
+    // Anything this reader has seen before is skipped — the no-duplicates guarantee.
+    if (!seen.has(article.id)) {
+      const entry: LedgerEntry = { article_id: article.id, source_id: source.id, source_title: source.title, status, edition_id: null, seen_at: now };
+      ops.push((b) => b.set(ledgerOf(source.user_id).doc(String(article.id)), entry));
+    }
+  }
+  await commitAll(ops);
+  return unique.filter((r) => r.status === 'pending' && !seen.has(r.id)).length;
 }
 
 function choose<T extends ParsedItem>(items: T[], firstTime: boolean, perSource: number): (T & NewItem)[] {
@@ -112,16 +121,13 @@ function choose<T extends ParsedItem>(items: T[], firstTime: boolean, perSource:
 }
 
 async function markSource(source: Source, result: { error?: string; etag?: string | null; lastModified?: string | null }) {
-  if (result.error) {
-    await sql`
-      update app.sources set last_fetched_at = now(), last_error = ${truncate(result.error, 300)}, consecutive_failures = consecutive_failures + 1
-      where id = ${source.id}`;
-  } else {
-    await sql`
-      update app.sources set last_fetched_at = now(), last_success_at = now(), last_error = null, consecutive_failures = 0,
-        etag = coalesce(${result.etag ?? null}, etag), last_modified = coalesce(${result.lastModified ?? null}, last_modified)
-      where id = ${source.id}`;
-  }
+  const ref = sourcesOf(source.user_id).doc(source.id);
+  if (result.error) await ref.update({ last_fetched_at: new Date(), last_error: truncate(result.error, 300), consecutive_failures: FieldValue.increment(1) });
+  else
+    await ref.update({
+      last_fetched_at: new Date(), last_success_at: new Date(), last_error: null, consecutive_failures: 0,
+      etag: result.etag ?? source.etag ?? null, last_modified: result.lastModified ?? source.last_modified ?? null,
+    });
 }
 
 /** Fetch one feed source and record unseen items. */
@@ -159,11 +165,8 @@ export async function ingestFeedSource(source: Source, perSource: number): Promi
 async function ingestPageSource(source: Source, links: PageLink[], perSource: number): Promise<{ newItems: number; error?: string }> {
   try {
     const keys = links.map((l) => dedupeKey({ url: l.url, fallback: l.url }));
-    const seenRows = await sql<{ dedupe_key: string }[]>`
-      select a.dedupe_key from app.articles a join app.user_articles ua on ua.article_id = a.id
-      where ua.user_id = ${source.user_id} and a.dedupe_key = any(${keys})`;
-    const seen = new Set(seenRows.map((r) => r.dedupe_key));
-    const fresh = links.filter((_, i) => !seen.has(keys[i]));
+    const seen = new Set((await getMany<LedgerEntry>(ledgerOf(source.user_id), keys.map(articleId))).map((l) => l.article_id));
+    const fresh = links.filter((_, i) => !seen.has(articleId(keys[i])));
     const firstTime = !source.last_success_at;
     const cap = firstTime ? Math.min(FIRST_FETCH_KEEP, perSource) : perSource;
     const toRead = fresh.slice(0, cap);
@@ -193,26 +196,35 @@ async function ingestPageSource(source: Source, links: PageLink[], perSource: nu
 
 type PendingRow = Article & { source_title_ua: string };
 
+/** This reader's pending ledger entries joined with the shared articles. */
+async function pendingArticles(userId: string): Promise<PendingRow[]> {
+  const ledger = rows<LedgerEntry>(await ledgerOf(userId).where('status', '==', 'pending').get());
+  const titles = new Map(ledger.map((l) => [l.article_id, l.source_title]));
+  const list = await getMany<Article>(articles(), ledger.map((l) => l.article_id));
+  return list.map((a) => ({ ...a, source_title_ua: titles.get(a.id) ?? a.source_title }));
+}
+const byNewest = (a: Article, b: Article) => (b.published_at ? +new Date(b.published_at) : 0) - (a.published_at ? +new Date(a.published_at) : 0) || b.id - a.id;
+const setLedger = (userId: string, ids: number[], patch: Partial<LedgerEntry>) =>
+  commitAll(ids.map((id) => (b: FirebaseFirestore.WriteBatch) => b.update(ledgerOf(userId).doc(String(id)), patch)));
+
 export async function executeRun(runId: number, userId: string, opts: { deadline?: number } = {}): Promise<void> {
   const t0 = Date.now();
   const deadline = opts.deadline ?? t0 + 230_000;
   const stats: RunStats = { sources: 0, failedSources: 0, newItems: 0, summarised: 0, cached: 0, queued: 0, editionItems: 0, extracted: 0 };
-  const stage = (text: string) => sql`update app.runs set stage = ${text}, stats = ${sql.json(stats)} where id = ${runId}`;
+  const runRef = runsOf(userId).doc(String(runId));
+  const stage = (text: string) => runRef.update({ stage: text, stats: { ...stats } });
   // Set once the reader's own AI provider is known; recorded on the profile when the run ends.
   let keyIssue: string | null = null;
   let usesOwnKey = false;
   const finish = async (status: 'done' | 'error', text: string, extra: { error?: string; editionId?: number } = {}) => {
-    await sql`
-      update app.runs set status = ${status}, stage = ${text}, stats = ${sql.json(stats)}, finished_at = now(),
-        error = ${extra.error ?? null}, edition_id = ${extra.editionId ?? null}
-      where id = ${runId}`;
-    if (usesOwnKey) await sql`update app.profiles set gemini_key_error = ${keyIssue} where user_id = ${userId}`;
+    await runRef.update({ status, stage: text, stats: { ...stats }, finished_at: new Date(), error: extra.error ?? null, edition_id: extra.editionId ?? null });
+    if (usesOwnKey) await profiles().doc(userId).update({ gemini_key_error: keyIssue });
   };
 
   try {
-    const [profile] = await sql<{ interests: string; reading: object; design: object; ai: object; gemini_key_enc: string | null; email_delivery: boolean }[]>`
-      select interests, reading, design, ai, gemini_key_enc, email_delivery from app.profiles where user_id = ${userId}`;
-    if (!profile) throw new Error('Profile not found');
+    const snap = await profiles().doc(userId).get();
+    if (!snap.exists) throw new Error('Profile not found');
+    const profile = data<ProfileRow>(snap);
     const reading = normaliseReading(profile.reading);
     const design = normaliseDesign(profile.design);
     // The reader's own AI provider, if any; problems with it are recorded and the shared key takes over.
@@ -221,7 +233,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
     const ai: AiAuth = { reader, onKeyFallback: (reason) => (keyIssue = reason) };
 
     // 1. Fetch every enabled source.
-    const sources = await sql<Source[]>`select * from app.sources where user_id = ${userId} and enabled order by created_at`;
+    const sources = rows<Source>(await sourcesOf(userId).where('enabled', '==', true).get());
     stats.sources = sources.length;
     await stage(`Checking ${sources.length} source${sources.length === 1 ? '' : 's'}`);
     const feeds = sources.filter((s) => s.kind !== 'page' && s.kind !== 'inbox');
@@ -257,10 +269,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
     stats.newItems = results.reduce((n, r) => n + r.newItems, 0);
 
     // 2. Summarise what nobody has summarised yet (shared across readers).
-    const pending = await sql<PendingRow[]>`
-      select a.*, ua.source_title as source_title_ua from app.user_articles ua join app.articles a on a.id = ua.article_id
-      where ua.user_id = ${userId} and ua.status = 'pending'
-      order by a.published_at desc nulls last, a.id desc limit 200`;
+    const pending = (await pendingArticles(userId)).sort(byNewest).slice(0, 200);
     const needSummary = pending.filter((a) => !a.summary && a.summary_attempts < MAX_ATTEMPTS).slice(0, MAX_SUMMARISE_PER_RUN);
     stats.cached = pending.filter((a) => a.summary).length;
 
@@ -275,20 +284,20 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
           stats.extracted++;
         }
         a.image_url = a.image_url ?? page.image;
-        await sql`
-          update app.articles set content = ${a.content}, image_url = coalesce(image_url, ${page.image}),
-            published_at = coalesce(published_at, ${page.published}), author = coalesce(author, ${page.author})
-          where id = ${a.id}`;
+        a.published_at = a.published_at ?? page.published ?? null;
+        a.author = a.author ?? page.author ?? null;
+        await articles().doc(String(a.id)).update({ content: a.content, image_url: a.image_url ?? null, published_at: a.published_at, author: a.author });
       });
     }
 
     let lastError: string | null = null;
     if (needSummary.length) {
       await stage(`Summarising ${needSummary.length} article${needSummary.length === 1 ? '' : 's'}`);
-      const topicRows = await sql<{ topic: string }[]>`
-        select topic from app.articles where topic is not null and summarized_at > now() - interval '30 days'
-        group by topic order by count(*) desc limit 30`;
-      const knownTopics = topicRows.map((r) => r.topic);
+      // ponytail: samples the 500 latest summaries for topic names; a counter doc if this gets slow.
+      const recent = await articles().where('summarized_at', '>', new Date(Date.now() - 30 * 86400_000)).orderBy('summarized_at', 'desc').limit(500).select('topic').get();
+      const tally = new Map<string, number>();
+      for (const d of recent.docs) if (d.get('topic')) tally.set(d.get('topic'), (tally.get(d.get('topic')) ?? 0) + 1);
+      const knownTopics = [...tally].sort((x, y) => y[1] - x[1]).slice(0, 30).map(([t]) => t);
       await mapLimit(chunk(needSummary, BATCH_SIZE), 2, async (batch) => {
         if (Date.now() > deadline - 60_000) return; // left pending for the next run
         try {
@@ -302,39 +311,37 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
             })),
             { knownTopics, ...ai },
           );
-          if (items.length) {
-            await sql`
-              update app.articles set tldr = v.tldr, summary = v.summary, key_points = v.key_points::jsonb, topic = v.topic,
-                quality = v.quality::smallint, summarized_at = now(), content = null
-              from (values ${sql(items.map((s) => [String(s.id), s.tldr, s.summary, JSON.stringify(s.key_points), s.topic, String(s.quality)]))})
-                as v(id, tldr, summary, key_points, topic, quality)
-              where app.articles.id = v.id::bigint`;
+          await commitAll(
+            items.map((s) => (b: FirebaseFirestore.WriteBatch) =>
+              b.update(articles().doc(String(s.id)), { tldr: s.tldr, summary: s.summary, key_points: s.key_points, topic: s.topic, quality: s.quality, summarized_at: new Date(), content: null }),
+            ),
+          );
+          for (const s of items) {
+            const a = batch.find((x) => x.id === s.id);
+            if (a) Object.assign(a, { tldr: s.tldr, summary: s.summary, key_points: s.key_points, topic: s.topic, quality: s.quality });
           }
           stats.summarised += items.length;
           const returned = new Set(items.map((s) => s.id));
           const missed = batch.filter((a) => !returned.has(a.id)).map((a) => a.id);
-          if (missed.length) await sql`update app.articles set summary_attempts = summary_attempts + 1 where id = any(${missed}::bigint[])`;
+          await bumpAttempts(missed);
         } catch (err) {
           lastError = err instanceof Error ? err.message : String(err);
           console.error('summariseBatch failed', lastError);
-          await sql`update app.articles set summary_attempts = summary_attempts + 1 where id = any(${batch.map((a) => a.id)}::bigint[])`;
+          await bumpAttempts(batch.map((a) => a.id));
         }
         await stage(`Summarising ${needSummary.length} articles (${stats.summarised} done)`);
       });
     }
     // Give up on articles that repeatedly fail to summarise.
-    await sql`
-      update app.user_articles ua set status = 'failed' from app.articles a
-      where ua.article_id = a.id and ua.user_id = ${userId} and ua.status = 'pending' and a.summary is null and a.summary_attempts >= ${MAX_ATTEMPTS}`;
+    const all = await pendingArticles(userId);
+    await setLedger(userId, all.filter((a) => !a.summary && (a.summary_attempts ?? 0) + (needSummary.some((n) => n.id === a.id && !n.summary) ? 1 : 0) >= MAX_ATTEMPTS).map((a) => a.id), { status: 'failed' });
 
     // 3. Assemble this reader's edition.
-    const ready = await sql<(Article & { source_title_ua: string })[]>`
-      select a.*, ua.source_title as source_title_ua from app.user_articles ua join app.articles a on a.id = ua.article_id
-      where ua.user_id = ${userId} and ua.status = 'pending' and a.summary is not null
-      order by a.quality desc nulls last, a.published_at desc nulls last limit 120`;
-    const [{ n: queued }] = await sql<{ n: number }[]>`
-      select count(*)::int as n from app.user_articles where user_id = ${userId} and status = 'pending'`;
-    stats.queued = queued - ready.length;
+    const ready = all
+      .filter((a) => a.summary)
+      .sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0) || byNewest(a, b))
+      .slice(0, 120);
+    stats.queued = all.length - ready.length;
 
     if (!ready.length) {
       if (lastError && needSummary.length) await finish('error', 'Summarising failed', { error: truncate(lastError, 600) });
@@ -368,34 +375,29 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
         await stage('Finding images');
         await mapLimit(wanted, 6, async (a) => {
           const page = await extractArticle(a.url);
-          if (page?.image) await sql`update app.articles set image_url = ${page.image} where id = ${a.id} and image_url is null`;
+          if (page?.image) await articles().doc(String(a.id)).update({ image_url: page.image });
         });
       }
     }
 
     const mainIds = [...draft.layout.lead, ...draft.layout.sections.flatMap((s) => s.ids)];
     const sourceCount = new Set(mainIds.map((id) => byId.get(id)?.source_title_ua)).size;
-    const editionId = await sql.begin(async (tx) => {
-      const [edition] = await tx<{ id: number }[]>`
-        insert into app.editions (user_id, headline, intro, layout, item_count, source_count, model, trigger)
-        select ${userId}, ${draft.headline}, ${draft.intro}, ${tx.json(draft.layout)}, ${mainIds.length}, ${sourceCount}, ${draft.model}, trigger
-        from app.runs where id = ${runId}
-        returning id`;
-      await tx`
-        update app.user_articles set status = 'done', edition_id = ${edition.id}
-        where user_id = ${userId} and article_id = any(${chosen}::bigint[])`;
-      // Stories that didn't make the cut are marked seen so they don't come back tomorrow.
-      await tx`
-        update app.user_articles set status = 'skipped'
-        where user_id = ${userId} and article_id = any(${ready.map((a) => a.id)}::bigint[]) and status = 'pending'`;
-      return edition.id;
+    const editionId = newId();
+    const [runSnap] = await Promise.all([runRef.get()]);
+    await editionsOf(userId).doc(String(editionId)).set({
+      id: editionId, user_id: userId, created_at: new Date(), headline: draft.headline, intro: draft.intro, layout: draft.layout,
+      item_count: mainIds.length, source_count: sourceCount, model: draft.model, trigger: runSnap.get('trigger') ?? null, emailed_at: null,
     });
+    const chosenSet = new Set(chosen);
+    await setLedger(userId, chosen, { status: 'done', edition_id: editionId });
+    // Stories that didn't make the cut are marked seen so they don't come back tomorrow.
+    await setLedger(userId, ready.filter((a) => !chosenSet.has(a.id)).map((a) => a.id), { status: 'skipped' });
     stats.editionItems = mainIds.length;
 
     if (profile.email_delivery) {
       await stage('Sending the email');
       try {
-        if (await sendEditionEmail(userId, editionId)) await sql`update app.editions set emailed_at = now() where id = ${editionId}`;
+        if (await sendEditionEmail(userId, editionId)) await editionsOf(userId).doc(String(editionId)).update({ emailed_at: new Date() });
       } catch (err) {
         console.error('email failed', err);
       }
@@ -407,14 +409,12 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
   }
 }
 
+const bumpAttempts = (ids: number[]) =>
+  commitAll(ids.map((id) => (b: FirebaseFirestore.WriteBatch) => b.update(articles().doc(String(id)), { summary_attempts: FieldValue.increment(1) })));
+
 /** Housekeeping: keep the free database small. */
 export async function prune(): Promise<void> {
-  await sql`delete from app.runs where started_at < now() - interval '60 days'`;
-  await sql`update app.articles set content = null where content is not null and created_at < now() - interval '3 days'`;
-  await sql`update app.articles set body_html = null where body_html is not null and created_at < now() - interval '90 days'`;
-  // Articles nobody's ledger references any more.
-  await sql`
-    delete from app.articles a where a.created_at < now() - interval '120 days'
-    and not exists (select 1 from app.user_articles ua where ua.article_id = a.id and ua.status = 'done')
-    and not exists (select 1 from app.saved s where s.article_id = a.id)`;
+  // ponytail: clears bulky text of 3–5 day old articles only; deleting unreferenced articles needs a cross-user scan, add if storage grows.
+  const old = await articles().where('created_at', '<', new Date(Date.now() - 3 * 86400_000)).where('created_at', '>', new Date(Date.now() - 5 * 86400_000)).limit(400).select().get();
+  await commitAll(old.docs.map((d) => (b: FirebaseFirestore.WriteBatch) => b.update(d.ref, { content: null })));
 }

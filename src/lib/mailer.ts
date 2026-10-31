@@ -1,5 +1,8 @@
 import nodemailer from 'nodemailer';
-import { sql, type EditionLayout } from './db.ts';
+import { data } from './db.ts';
+import { editionsOf, editionStories } from './editions.ts';
+import { getProfileRow } from './profiles.ts';
+import type { Edition } from './db.ts';
 import { renderEditionEmail, type EmailStory } from './email-html.ts';
 import { normaliseDesign, normaliseReading, normaliseSchedule, TEMPLATES } from './profile.ts';
 
@@ -25,15 +28,13 @@ function transport() {
 /** Email one edition to its reader. Returns false when email isn't configured. */
 export async function sendEditionEmail(userId: string, editionId: number): Promise<boolean> {
   if (!mailConfigured()) return false;
-  const [profile] = await sql<{ email: string | null; paper_name: string; design: object; reading: object; schedule: object }[]>`
-    select email, paper_name, design, reading, schedule from app.profiles where user_id = ${userId}`;
-  const [edition] = await sql<{ id: number; headline: string | null; intro: string | null; layout: EditionLayout; created_at: Date }[]>`
-    select id, headline, intro, layout, created_at from app.editions where id = ${editionId} and user_id = ${userId}`;
-  if (!profile?.email || !edition) return false;
-  const rows = await sql<(EmailStory & { source_title: string })[]>`
-    select a.id, a.title, ua.source_title as source, a.tldr, a.summary, a.key_points, a.image_url
-    from app.user_articles ua join app.articles a on a.id = ua.article_id
-    where ua.edition_id = ${editionId} and ua.user_id = ${userId}`;
+  const profile = await getProfileRow(userId);
+  const snap = await editionsOf(userId).doc(String(editionId)).get();
+  if (!profile?.email || !snap.exists) return false;
+  const edition = data<Edition>(snap);
+  const rows: EmailStory[] = (await editionStories(userId, editionId)).map((a) => ({
+    id: a.id, title: a.title, source: a.source_title, tldr: a.tldr, summary: a.summary, key_points: a.key_points, image_url: a.image_url,
+  }));
   const design = normaliseDesign(profile.design);
   const tz = normaliseSchedule(profile.schedule).timezone;
   const dateLabel = new Date(edition.created_at).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: tz });

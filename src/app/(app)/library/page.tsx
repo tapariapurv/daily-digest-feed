@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { LocalDate } from '@/components/LocalDate';
 import { SaveButton } from '@/components/StoryBits';
 import { requireUser } from '@/lib/auth';
-import { sql } from '@/lib/db';
+import { articles, getMany, rows, user as userDoc, type Article } from '@/lib/db';
 import { listEditions } from '@/lib/editions';
 import { timeAgo } from '@/lib/format';
 
@@ -22,24 +22,26 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const tab = TABS.some((t) => t.id === sp.tab) ? (sp.tab as (typeof TABS)[number]['id']) : 'read';
   const q = (sp.q ?? '').trim().slice(0, 100);
-  const like = `%${q.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
 
+  // ponytail: last 300 read/saved stories filtered in memory; full-text search needs an index service.
   let entries: Entry[] = [];
-  if (tab === 'read') {
-    entries = await sql<Entry[]>`
-      select a.id, a.title, a.url, coalesce(ua.source_title, a.source_title) as source_title, a.tldr, r.read_at as at,
-        exists (select 1 from app.saved s where s.user_id = r.user_id and s.article_id = a.id) as saved
-      from app.reads r join app.articles a on a.id = r.article_id
-      left join app.user_articles ua on ua.user_id = r.user_id and ua.article_id = a.id
-      where r.user_id = ${user.id} and (${q} = '' or a.title ilike ${like} or a.tldr ilike ${like} or ua.source_title ilike ${like})
-      order by r.read_at desc limit 300`;
-  } else if (tab === 'saved') {
-    entries = await sql<Entry[]>`
-      select a.id, a.title, a.url, coalesce(ua.source_title, a.source_title) as source_title, a.tldr, s.saved_at as at, true as saved
-      from app.saved s join app.articles a on a.id = s.article_id
-      left join app.user_articles ua on ua.user_id = s.user_id and ua.article_id = a.id
-      where s.user_id = ${user.id} and (${q} = '' or a.title ilike ${like} or a.tldr ilike ${like} or ua.source_title ilike ${like})
-      order by s.saved_at desc limit 300`;
+  if (tab === 'read' || tab === 'saved') {
+    const me = userDoc(user.id);
+    const [list, saved] = await Promise.all([
+      me.collection(tab === 'read' ? 'reads' : 'saved').orderBy(tab === 'read' ? 'read_at' : 'saved_at', 'desc').limit(300).get().then((s) => rows<{ article_id: number; read_at?: Date; saved_at?: Date }>(s)),
+      me.collection('saved').select().get().then((s) => new Set(s.docs.map((d) => Number(d.id)))),
+    ]);
+    const [arts, ledger] = await Promise.all([getMany<Article>(articles(), list.map((r) => r.article_id)), getMany<{ article_id: number; source_title: string }>(me.collection('ledger'), list.map((r) => r.article_id))]);
+    const byId = new Map(arts.map((a) => [a.id, a]));
+    const titles = new Map(ledger.map((l) => [l.article_id, l.source_title]));
+    const needle = q.toLowerCase();
+    entries = list
+      .map((r): Entry | null => {
+        const a = byId.get(r.article_id);
+        if (!a) return null;
+        return { id: a.id, title: a.title, url: a.url, source_title: titles.get(a.id) ?? a.source_title, tldr: a.tldr, at: (r.read_at ?? r.saved_at)!, saved: saved.has(a.id) };
+      })
+      .filter((e): e is Entry => !!e && (!needle || `${e.title} ${e.tldr ?? ''} ${e.source_title}`.toLowerCase().includes(needle)));
   }
   const editions = tab === 'editions' ? await listEditions(user.id) : [];
 

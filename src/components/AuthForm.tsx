@@ -1,26 +1,34 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { createSupabaseBrowser } from '@/lib/supabase/browser';
+import { useState } from 'react';
+import { createUserWithEmailAndPassword, GoogleAuthProvider, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, type UserCredential } from 'firebase/auth';
+import { browserAuth, startSession } from '@/lib/firebase/browser';
 
-type Mode = 'login' | 'signup' | 'forgot' | 'reset';
+type Mode = 'login' | 'signup' | 'forgot';
 
 const COPY: Record<Mode, { title: string; lede: string; cta: string }> = {
   login: { title: 'Good morning.', lede: 'Sign in to read today’s paper.', cta: 'Sign in' },
   signup: { title: 'Start your paper.', lede: 'Free. Takes a minute. Your sources, summarised every morning.', cta: 'Create account' },
   forgot: { title: 'Forgot it?', lede: 'We’ll email you a link to set a new password.', cta: 'Send reset link' },
-  reset: { title: 'New password.', lede: 'Choose a new password for your account.', cta: 'Save password' },
 };
 
 function friendly(message: string): string {
-  if (/invalid login credentials/i.test(message)) return 'That email and password don’t match.';
-  if (/email not confirmed/i.test(message)) return 'Confirm your email first — check your inbox for the link.';
-  if (/already registered|already been registered/i.test(message)) return 'There’s already an account with that email — sign in instead.';
-  if (/not authorized|sending.*email/i.test(message)) return 'We couldn’t send email to that address right now. Please contact the site owner.';
-  if (/email rate limit/i.test(message)) return 'We’ve sent too many emails this hour — please try again later.';
-  if (/rate limit/i.test(message)) return 'Too many attempts — wait a minute and try again.';
-  return message;
+  if (/invalid-credential|wrong-password|user-not-found/i.test(message)) return 'That email and password don’t match.';
+  if (/email-already-in-use/i.test(message)) return 'There’s already an account with that email — sign in instead.';
+  if (/invalid-email/i.test(message)) return 'That doesn’t look like an email address.';
+  if (/weak-password/i.test(message)) return 'Use at least 8 characters for your password.';
+  if (/too-many-requests/i.test(message)) return 'Too many attempts — wait a minute and try again.';
+  if (/popup-closed|cancelled-popup/i.test(message)) return 'Google sign-in was closed before it finished.';
+  if (/network-request-failed/i.test(message)) return 'You seem to be offline — check your connection.';
+  return message.replace(/^Firebase: /, '');
+}
+
+/** After any sign-in: hand the token to the server, then go where the reader was heading. */
+async function enter(cred: UserCredential, fallback: string) {
+  await startSession(await cred.user.getIdToken());
+  const next = new URLSearchParams(window.location.search).get('next');
+  window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : fallback;
 }
 
 export function AuthForm({ mode }: { mode: Mode }) {
@@ -30,19 +38,17 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [show, setShow] = useState(false);
-  const [sent, setSent] = useState(false);
   const copy = COPY[mode];
 
-  useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    if (q.get('error') === 'link') setInfo('That link was opened in a different browser or has expired. If you just confirmed your email, sign in below.');
-  }, []);
-
-  async function resend() {
+  async function google() {
+    setBusy(true);
     setError(null);
-    const { error } = await createSupabaseBrowser().auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=/welcome` } });
-    if (error) setError(friendly(error.message));
-    else setInfo('Sent again. It can take a minute — check spam too.');
+    try {
+      await enter(await signInWithPopup(browserAuth(), new GoogleAuthProvider()), '/');
+    } catch (err) {
+      setError(friendly(err instanceof Error ? err.message : String(err)));
+      setBusy(false);
+    }
   }
 
   async function submit(e: React.FormEvent) {
@@ -50,80 +56,27 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setBusy(true);
     setError(null);
     setInfo(null);
-    const supabase = createSupabaseBrowser();
-    const origin = window.location.origin;
+    const auth = browserAuth();
     try {
-      if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        const next = new URLSearchParams(window.location.search).get('next');
-        window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
-        return;
-      }
+      if (mode === 'login') return await enter(await signInWithEmailAndPassword(auth, email, password), '/');
       if (mode === 'signup') {
         if (password.length < 8) throw new Error('Use at least 8 characters for your password.');
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${origin}/auth/confirm?next=/welcome` },
-        });
-        if (error) throw error;
-        if (data.session) {
-          window.location.href = '/welcome';
-          return;
+        try {
+          return await enter(await createUserWithEmailAndPassword(auth, email, password), '/welcome');
+        } catch (err) {
+          // Same email and password as an existing account: just sign them in.
+          if (!/email-already-in-use/.test(String(err))) throw err;
+          return await enter(await signInWithEmailAndPassword(auth, email, password), '/');
         }
-        // Supabase answers a sign-up for an existing email with a fake user (no identities) and sends nothing.
-        if (data.user && !data.user.identities?.length) {
-          const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-          if (!signInError) {
-            window.location.href = '/';
-            return;
-          }
-          throw new Error('There’s already an account with that email. Sign in, or reset your password if you’ve forgotten it.');
-        }
-        setSent(true);
       }
-      if (mode === 'forgot') {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${origin}/auth/confirm?next=/auth/reset` });
-        if (error) throw error;
-        setInfo('If that email has an account, a reset link is on its way.');
-      }
-      if (mode === 'reset') {
-        if (password.length < 8) throw new Error('Use at least 8 characters for your password.');
-        const { error } = await supabase.auth.updateUser({ password });
-        if (error) throw error;
-        window.location.href = '/';
-        return;
-      }
+      await sendPasswordResetEmail(auth, email);
+      setInfo('If that email has an account, a reset link is on its way. Set a new password there, then sign in here.');
+      setBusy(false);
     } catch (err) {
       setError(friendly(err instanceof Error ? err.message : String(err)));
+      setBusy(false);
     }
-    setBusy(false);
   }
-
-  if (sent)
-    return (
-      <div className="auth-sent reveal">
-        <div className="auth-stamp" aria-hidden>✉</div>
-        <h1 className="headline auth-title">Check your inbox.</h1>
-        <p className="lede">
-          We sent a link to <strong>{email}</strong>. Open it in this browser and your paper starts setting up.
-        </p>
-        <div className="row" style={{ gap: '0.6rem', marginTop: '1.4rem' }}>
-          <a className="btn btn-primary" href="https://mail.google.com/mail/u/0/#search/from%3Asupabase+OR+%22Morning+Digest%22" target="_blank" rel="noreferrer">
-            Open Gmail
-          </a>
-          <button className="btn btn-quiet" type="button" onClick={resend}>
-            Resend link
-          </button>
-        </div>
-        {error && <p className="note error-text">{error}</p>}
-        {info && <p className="note ok-text">{info}</p>}
-        <p className="note" style={{ marginTop: '1.6rem' }}>
-          Wrong address? <button type="button" className="linkish" onClick={() => setSent(false)}>Use another email</button>
-        </p>
-      </div>
-    );
 
   return (
     <div>
@@ -134,15 +87,29 @@ export function AuthForm({ mode }: { mode: Mode }) {
         {copy.lede}
       </p>
       <form className="stack" onSubmit={submit}>
-        {mode !== 'reset' && (
-          <label className="field">
+        {mode !== 'forgot' && (
+          <>
+            <button className="btn btn-block btn-google" type="button" onClick={google} disabled={busy}>
+              <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+                <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+                <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+              </svg>
+              Continue with Google
+            </button>
+            <p className="or">
+              <span>or with email</span>
+            </p>
+          </>
+        )}
+        <label className="field">
             <span>Email</span>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required autoFocus />
           </label>
-        )}
         {mode !== 'forgot' && (
           <label className="field">
-            <span>{mode === 'reset' ? 'New password' : 'Password'}</span>
+            <span>Password</span>
             <span className="pw">
             <input
               type={show ? 'text' : 'password'}
@@ -176,7 +143,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
             Already have an account? <Link href="/login">Sign in</Link>
           </>
         )}
-        {(mode === 'forgot' || mode === 'reset') && <Link href="/login">Back to sign in</Link>}
+        {mode === 'forgot' && <Link href="/login">Back to sign in</Link>}
       </p>
     </div>
   );

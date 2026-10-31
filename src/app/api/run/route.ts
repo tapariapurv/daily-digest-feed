@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import { json, withUser } from '@/lib/api';
-import { sql, type Run } from '@/lib/db';
-import { executeRun, RunLimitError, startRun } from '@/lib/pipeline';
+import { rows, type Run } from '@/lib/db';
+import { executeRun, RunLimitError, runsOf, startRun } from '@/lib/pipeline';
 
 export const maxDuration = 300;
 
@@ -18,6 +18,6 @@ export const POST = withUser(async (user) => {
 });
 
 export const GET = withUser(async (user) => {
-  const [run] = await sql<Run[]>`select * from app.runs where user_id = ${user.id} order by started_at desc limit 1`;
+  const [run] = rows<Run>(await runsOf(user.id).orderBy('started_at', 'desc').limit(1).get());
   return json({ run: run ?? null });
 });

@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react';
 import type { Run } from '@/lib/db';
 import { timeAgo } from '@/lib/format';
 import type { Profile, Schedule } from '@/lib/profile';
-import { createSupabaseBrowser } from '@/lib/supabase/browser';
+import { endSession } from '@/lib/firebase/browser';
 import { AiProviderPicker } from './AiProviderPicker';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -138,7 +138,7 @@ export function SettingsForm({ initial, mailReady, runs }: { initial: Profile; m
   }
 
   async function signOut() {
-    await createSupabaseBrowser().auth.signOut();
+    await endSession();
     window.location.href = '/';
   }
 

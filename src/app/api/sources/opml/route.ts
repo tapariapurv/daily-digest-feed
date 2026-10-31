@@ -1,10 +1,11 @@
 import { withUser } from '@/lib/api';
-import { sql, type Source } from '@/lib/db';
+import { rows, type Source } from '@/lib/db';
+import { sourcesOf } from '@/lib/sources';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 export const GET = withUser(async (user) => {
-  const sources = await sql<Source[]>`select * from app.sources where user_id = ${user.id} and kind <> 'page' order by title`;
+  const sources = rows<Source>(await sourcesOf(user.id).get()).filter((s) => s.kind !== 'page').sort((a, b) => a.title.localeCompare(b.title));
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
   <head><title>Morning Digest sources</title><dateCreated>${new Date().toUTCString()}</dateCreated></head>

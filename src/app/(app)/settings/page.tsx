@@ -1,6 +1,7 @@
 import { SettingsForm } from '@/components/SettingsForm';
 import { requireUser } from '@/lib/auth';
-import { sql, type Run } from '@/lib/db';
+import { rows, type Run } from '@/lib/db';
+import { runsOf } from '@/lib/pipeline';
 import { mailConfigured } from '@/lib/mailer';
 import { getProfile } from '@/lib/profiles';
 
@@ -11,7 +12,7 @@ export default async function SettingsPage() {
   const user = await requireUser();
   const [profile, runs] = await Promise.all([
     getProfile(user.id),
-    sql<Run[]>`select * from app.runs where user_id = ${user.id} order by started_at desc limit 8`,
+    runsOf(user.id).orderBy('started_at', 'desc').limit(8).get().then((s) => rows<Run>(s)),
   ]);
   return (
     <div className="reveal">
