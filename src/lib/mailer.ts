@@ -1,31 +1,19 @@
-import nodemailer from 'nodemailer';
 import { data } from './db.ts';
+import { mailboxConfigured, mailOut } from './mailbox.ts';
 import { editionsOf, editionStories } from './editions.ts';
 import { getProfileRow } from './profiles.ts';
 import type { Edition } from './db.ts';
 import { renderEditionEmail, type EmailStory } from './email-html.ts';
 import { normaliseDesign, normaliseReading, normaliseSchedule, TEMPLATES } from './profile.ts';
 
-export function mailConfigured(): boolean {
-  return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
-}
+export const mailConfigured = mailboxConfigured;
 
 export function siteUrl(): string {
   const url = process.env.SITE_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000');
   return url.replace(/\/$/, '');
 }
 
-function transport() {
-  const port = Number(process.env.SMTP_PORT ?? 465);
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST ?? 'smtp.gmail.com',
-    port,
-    secure: port === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-}
-
-/** Email one edition to its reader. Returns false when email isn't configured. */
+/** Queue one edition for its reader; the Apps Script sends it from Gmail within 10 minutes. Returns false when email isn't configured. */
 export async function sendEditionEmail(userId: string, editionId: number): Promise<boolean> {
   if (!mailConfigured()) return false;
   const profile = await getProfileRow(userId);
@@ -51,12 +39,13 @@ export async function sendEditionEmail(userId: string, editionId: number): Promi
     siteUrl: siteUrl(),
     editionId,
   });
-  await transport().sendMail({
-    from: { name: profile.paper_name, address: process.env.SMTP_FROM ?? process.env.SMTP_USER! },
+  await mailOut().add({
     to: profile.email,
+    name: profile.paper_name,
     subject: `${profile.paper_name} — ${edition.headline ?? dateLabel}`,
     html,
     text,
+    created_at: new Date(),
   });
   return true;
 }

@@ -273,19 +273,6 @@ export function SourcesManager({
             </button>
           </div>
         )}
-        {!inboxes.length && !inboxReady && (
-          <ol className="steps" style={{ margin: '0.4rem 0 0' }}>
-            <li>
-              Open{' '}
-              <a href="https://kill-the-newsletter.com" target="_blank" rel="noreferrer">
-                kill-the-newsletter.com
-              </a>
-              , type a name and press “Create feed” (free, no account).
-            </li>
-            <li>Subscribe to your newsletters with the email address it shows.</li>
-            <li>Paste the feed link it shows into “Add sources” above.</li>
-          </ol>
-        )}
         <p className="hint">Substack, Beehiiv, Ghost and Buttondown newsletters don’t need this — paste their web address above instead.</p>
       </section>
 

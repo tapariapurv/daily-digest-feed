@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from './lib/firebase/config';
 
 // Pages anyone can open. Everything else needs a session cookie; pages and APIs verify it themselves.
-const PUBLIC = [/^\/$/, /^\/login$/, /^\/signup$/, /^\/forgot$/, /^\/r\//, /^\/api\/session$/, /^\/api\/cron\//, /^\/api\/health$/];
+const PUBLIC = [/^\/$/, /^\/login$/, /^\/signup$/, /^\/forgot$/, /^\/r\//, /^\/api\/session$/, /^\/api\/cron\//, /^\/api\/health$/, /^\/api\/mail$/];
 
 export function proxy(request: NextRequest) {
   const signedIn = request.cookies.has(SESSION_COOKIE);

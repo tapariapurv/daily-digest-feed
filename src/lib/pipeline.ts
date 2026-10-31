@@ -6,7 +6,7 @@ import { assembleEdition, summariseBatch } from './editor.ts';
 import { extractArticle } from './extract.ts';
 import { fetchFeed, type ParsedItem } from './feeds.ts';
 import { describeFetchError, fetchText } from './http.ts';
-import { fetchInbox, mailboxConfigured } from './mailbox.ts';
+import { fetchInbox, mailboxConfigured, mailIn } from './mailbox.ts';
 import { sendEditionEmail } from './mailer.ts';
 import { normaliseDesign, normaliseReading } from './profile.ts';
 import { readerAiFrom, type ProfileRow } from './profiles.ts';
@@ -417,4 +417,6 @@ export async function prune(): Promise<void> {
   // ponytail: clears bulky text of 3–5 day old articles only; deleting unreferenced articles needs a cross-user scan, add if storage grows.
   const old = await articles().where('created_at', '<', new Date(Date.now() - 3 * 86400_000)).where('created_at', '>', new Date(Date.now() - 5 * 86400_000)).limit(400).select().get();
   await commitAll(old.docs.map((d) => (b: FirebaseFirestore.WriteBatch) => b.update(d.ref, { content: null })));
+  const oldMail = await mailIn().where('received_at', '<', new Date(Date.now() - 7 * 86400_000)).limit(400).select().get();
+  await commitAll(oldMail.docs.map((d) => (b: FirebaseFirestore.WriteBatch) => b.delete(d.ref)));
 }

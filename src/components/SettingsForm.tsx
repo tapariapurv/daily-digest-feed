@@ -131,10 +131,10 @@ export function SettingsForm({ initial, mailReady, runs }: { initial: Profile; m
   }
 
   async function sendTest() {
-    setTestState('Sending…');
+    setTestState('Queuing…');
     const res = await fetch('/api/email/test', { method: 'POST' });
     const body = await res.json().catch(() => ({}));
-    setTestState(res.ok ? `Sent to ${body.to}. Check your inbox (and spam, the first time).` : body.error ?? 'Couldn’t send.');
+    setTestState(res.ok ? `On its way to ${body.to} within 10 minutes. Check spam the first time.` : body.error ?? 'Couldn’t send.');
   }
 
   async function signOut() {

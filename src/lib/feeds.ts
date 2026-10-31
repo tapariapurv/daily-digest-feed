@@ -153,7 +153,6 @@ function kindFor(feedUrl: string): string {
   const host = hostOf(feedUrl);
   if (host.endsWith('youtube.com')) return 'youtube';
   if (host.endsWith('reddit.com')) return 'reddit';
-  if (host.endsWith('kill-the-newsletter.com')) return 'newsletter';
   if (host.endsWith('substack.com')) return 'newsletter';
   return 'feed';
 }
@@ -315,7 +314,7 @@ export async function resolveSource(raw: string): Promise<ResolvedSource> {
     throw new Error(`${input.hostname} blocked the request (HTTP ${page.status}). Try pasting its feed URL directly.`);
   }
   if (page.status >= 400) throw new Error(`${input.hostname} returned HTTP ${page.status}.`);
-  throw new Error('No feed found on that page. If it’s an email-only newsletter, use a kill-the-newsletter.com address.');
+  throw new Error('No feed found on that page. If it’s an email-only newsletter, use your newsletter address under Sources.');
 }
 
 export type FeedFetchResult =
