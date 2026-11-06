@@ -1,7 +1,7 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { fetchText } from './http.ts';
-import { collapse } from './text.ts';
+import { collapse, isJunkImage } from './text.ts';
 
 const SKIP_HOSTS = /(^|\.)(youtube\.com|youtu\.be|reddit\.com|twitter\.com|x\.com)$/;
 
@@ -36,7 +36,8 @@ function absolute(url: string | null, base: string): string | null {
 /** Parse metadata and main text out of an article's HTML. */
 export function parseArticleHtml(html: string, url: string): ExtractedArticle {
   const head = html.slice(0, 200_000);
-  const image = absolute(meta(head, 'og:image', 'og:image:url', 'twitter:image', 'twitter:image:src'), url);
+  const shareImage = absolute(meta(head, 'og:image', 'og:image:url', 'twitter:image', 'twitter:image:src'), url);
+  const image = shareImage && !isJunkImage(shareImage) ? shareImage : null;
   const publishedRaw = meta(head, 'article:published_time', 'og:published_time', 'datePublished', 'pubdate', 'date') ??
     /<time[^>]+datetime=["']([^"']+)["']/i.exec(html)?.[1] ?? null;
   const published = publishedRaw && !Number.isNaN(Date.parse(publishedRaw)) ? new Date(publishedRaw) : null;

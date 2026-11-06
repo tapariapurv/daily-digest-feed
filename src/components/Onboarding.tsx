@@ -96,7 +96,7 @@ export function Onboarding({ profile, sources, sample, inboxReady }: { profile: 
   }
 
   return (
-    <div className="reveal" style={{ paddingTop: '1rem' }}>
+    <div style={{ paddingTop: '1rem' }}>
       <div className="steps-bar" aria-label={`Step ${step + 1} of ${STEPS.length}`}>
         {STEPS.map((s, i) => (
           <i key={s} className={i <= step ? 'on' : ''} />

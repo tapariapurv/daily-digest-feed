@@ -28,7 +28,7 @@ export function Landing() {
             </Link>
           </nav>
         </header>
-        <section className="masthead landing-hero reveal">
+        <section className="masthead landing-hero">
           <div className="masthead-inner">
             <p className="greeting">Good morning.</p>
             <h1 className="headline">Everything you follow, in one calm morning read.</h1>
@@ -49,7 +49,7 @@ export function Landing() {
 
         <div className="feature-grid">
           {FEATURES.map((f) => (
-            <div key={f.title} className="feature reveal">
+            <div key={f.title} className="feature">
               <h3>{f.title}</h3>
               <p>{f.body}</p>
             </div>

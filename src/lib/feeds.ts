@@ -1,7 +1,7 @@
 import { parseFeed } from '@rowanmanning/feed-parser';
 import { describeFetchError, fetchText } from './http.ts';
 import { extractLinks, heuristicArticleLinks, pageTitle } from './scrape.ts';
-import { htmlToText, hostOf } from './text.ts';
+import { htmlToText, hostOf, isJunkImage } from './text.ts';
 
 export type ParsedItem = {
   guid: string | null;
@@ -78,9 +78,9 @@ export function firstImage(html: string | null | undefined, base: string): strin
   for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
     const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
     const width = Number(/\bwidth\s*=\s*["']?(\d+)/i.exec(tag)?.[1] ?? 0);
-    if (!src || src.startsWith('data:') || (width && width < 80)) continue;
-    if (/pixel|tracking|emoji|gravatar|feedburner|doubleclick|\/1x1|spacer/i.test(src)) continue;
-    const url = safeUrl(src.replace(/&amp;/g, '&'), base);
+    if (!src || src.startsWith('data:') || (width && width < 200) || isJunkImage(src)) continue;
+    // WordPress serves thumbnails as name-150x150.jpg; the bare name is the original.
+    const url = safeUrl(src.replace(/&amp;/g, '&').replace(/-\d{2,4}x\d{2,4}(?=\.(?:jpe?g|png|webp)(?:\?|$))/i, ''), base);
     if (url) return url;
   }
   return null;

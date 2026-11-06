@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { ReaderAi } from './ai';
 import { decryptSecret } from './crypto';
 import { data, profiles } from './db';
@@ -35,11 +36,11 @@ export async function getProfileRow(userId: string): Promise<ProfileRow | undefi
   return snap.exists ? data<ProfileRow>(snap) : undefined;
 }
 
-export async function getProfile(userId: string): Promise<Profile> {
+export const getProfile = cache(async (userId: string): Promise<Profile> => {
   const row = await getProfileRow(userId);
   if (!row) throw new Error('Profile not found');
   return toProfile(row);
-}
+});
 
 export const updateProfile = (userId: string, patch: Partial<ProfileRow> & Record<string, unknown>) =>
   profiles().doc(userId).update({ ...patch, updated_at: new Date() });

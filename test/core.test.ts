@@ -142,3 +142,10 @@ test('Reddit link posts use the linked article, self posts keep the thread', () 
 test('Hacker News maps to the hnrss mirror', () => {
   assert.equal(knownFeedFor(new URL('https://news.ycombinator.com/')), 'https://hnrss.org/frontpage?points=150');
 });
+
+test('stripMarkdown leaves only the words', async () => {
+  const { stripMarkdown } = await import('../src/lib/text.ts');
+  assert.equal(stripMarkdown('## AI News'), 'AI News');
+  assert.equal(stripMarkdown('**Bold** and _soft_ and [a link](https://x.co)'), 'Bold and soft and a link');
+  assert.equal(stripMarkdown('snake_case_name and 2 * 3 * 4'), 'snake_case_name and 2 * 3 * 4');
+});

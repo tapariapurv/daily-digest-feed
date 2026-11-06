@@ -5,6 +5,7 @@ import { requireUser } from '@/lib/auth';
 import { articles, getMany, rows, user as userDoc, type Article } from '@/lib/db';
 import { listEditions } from '@/lib/editions';
 import { timeAgo } from '@/lib/format';
+import { stripMarkdown } from '@/lib/text';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Library' };
@@ -23,15 +24,15 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
   const tab = TABS.some((t) => t.id === sp.tab) ? (sp.tab as (typeof TABS)[number]['id']) : 'read';
   const q = (sp.q ?? '').trim().slice(0, 100);
 
-  // ponytail: last 300 read/saved stories filtered in memory; full-text search needs an index service.
+  // ponytail: searches the last 300 stories in memory; full-text search needs an index service.
   let entries: Entry[] = [];
   if (tab === 'read' || tab === 'saved') {
     const me = userDoc(user.id);
     const [list, saved] = await Promise.all([
-      me.collection(tab === 'read' ? 'reads' : 'saved').orderBy(tab === 'read' ? 'read_at' : 'saved_at', 'desc').limit(300).get().then((s) => rows<{ article_id: number; read_at?: Date; saved_at?: Date }>(s)),
+      me.collection(tab === 'read' ? 'reads' : 'saved').orderBy(tab === 'read' ? 'read_at' : 'saved_at', 'desc').limit(q ? 300 : 40).get().then((s) => rows<{ article_id: number; read_at?: Date; saved_at?: Date }>(s)),
       me.collection('saved').select().get().then((s) => new Set(s.docs.map((d) => Number(d.id)))),
     ]);
-    const [arts, ledger] = await Promise.all([getMany<Article>(articles(), list.map((r) => r.article_id)), getMany<{ article_id: number; source_title: string }>(me.collection('ledger'), list.map((r) => r.article_id))]);
+    const [arts, ledger] = await Promise.all([getMany<Article>(articles(), list.map((r) => r.article_id), ['id', 'title', 'url', 'source_title', 'tldr']), getMany<{ article_id: number; source_title: string }>(me.collection('ledger'), list.map((r) => r.article_id), ['article_id', 'source_title'])]);
     const byId = new Map(arts.map((a) => [a.id, a]));
     const titles = new Map(ledger.map((l) => [l.article_id, l.source_title]));
     const needle = q.toLowerCase();
@@ -39,7 +40,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
       .map((r): Entry | null => {
         const a = byId.get(r.article_id);
         if (!a) return null;
-        return { id: a.id, title: a.title, url: a.url, source_title: titles.get(a.id) ?? a.source_title, tldr: a.tldr, at: (r.read_at ?? r.saved_at)!, saved: saved.has(a.id) };
+        return { id: a.id, title: stripMarkdown(a.title), url: a.url, source_title: titles.get(a.id) ?? a.source_title, tldr: a.tldr && stripMarkdown(a.tldr), at: (r.read_at ?? r.saved_at)!, saved: saved.has(a.id) };
       })
       .filter((e): e is Entry => !!e && (!needle || `${e.title} ${e.tldr ?? ''} ${e.source_title}`.toLowerCase().includes(needle)));
   }
@@ -53,7 +54,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
   }
 
   return (
-    <div className="reveal">
+    <div>
       <div className="page-head">
         <div>
           <h1 className="page-title">Library</h1>

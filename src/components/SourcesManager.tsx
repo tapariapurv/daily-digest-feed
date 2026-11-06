@@ -141,7 +141,7 @@ export function SourcesManager({
   }
 
   const inboxes = sources.filter((s) => s.inbox_email);
-  const followed = new Set(sources.map((s) => hostname(s.site_url ?? s.feed_url)));
+  const followed = new Set(sources.flatMap((s) => [s.feed_url, hostname(s.site_url ?? s.feed_url)]));
 
   return (
     <div className="stack-lg">
@@ -227,7 +227,7 @@ export function SourcesManager({
         <p className="panel-sub">One tap adds a handful of well-loved sources. Remove any you don’t want later.</p>
         <div className="packs">
           {PACKS.map((p) => {
-            const have = p.urls.every((u) => followed.has(hostname(u)));
+            const have = p.urls.every((u) => followed.has(u) || followed.has(hostname(u)));
             return (
               <button key={p.id} type="button" className="pack" aria-pressed={have} disabled={!!adding || have} onClick={() => add({ urls: p.urls, names: [] }, p.id)}>
                 <strong>

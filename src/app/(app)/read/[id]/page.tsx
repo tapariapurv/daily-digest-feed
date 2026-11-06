@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { MailFrame } from '@/components/StoryBits';
 import { requireUser } from '@/lib/auth';
 import { articles, data, type Article } from '@/lib/db';
 import { ledgerOf } from '@/lib/sources';
@@ -16,10 +17,10 @@ export default async function ReadPage({ params }: { params: Promise<{ id: strin
   const issue = snap?.exists ? { ...data<Article>(snap), source_title: entry!.get('source_title') as string } : null;
   if (!issue) notFound();
   const doc = issue.body_html
-    ? `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:16px;background:#fff;color:#111;font-family:system-ui,sans-serif}img{max-width:100%;height:auto}table{max-width:100%!important}</style></head><body>${issue.body_html}</body></html>`
+    ? `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0 auto;max-width:680px;padding:24px 16px;background:#fff;color:#111;font:17px/1.6 system-ui,sans-serif}img{max-width:100%;height:auto}table{max-width:100%!important}</style></head><body>${issue.body_html}</body></html>`
     : null;
   return (
-    <article className="reveal stack">
+    <article className="edition stack">
       <div className="page-head">
         <div>
           <p className="meta">
@@ -30,12 +31,7 @@ export default async function ReadPage({ params }: { params: Promise<{ id: strin
         </div>
       </div>
       {doc ? (
-        <iframe
-          title={issue.title}
-          srcDoc={doc}
-          sandbox="allow-popups allow-popups-to-escape-sandbox"
-          style={{ width: '100%', height: '80vh', border: '1px solid var(--rule)', borderRadius: 'var(--radius)', background: '#fff' }}
-        />
+        <MailFrame title={issue.title} doc={doc} />
       ) : (
         <p className="muted">The original email is no longer stored.</p>
       )}

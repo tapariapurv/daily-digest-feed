@@ -1,5 +1,6 @@
 import { articles, getMany, rows, user, type Article, type Edition, type EditionLayout, type LedgerEntry } from './db';
 import { ledgerOf } from './sources';
+import { stripMarkdown } from './text';
 
 export type StoryItem = {
   id: number;
@@ -11,6 +12,7 @@ export type StoryItem = {
   tldr: string | null;
   summary: string | null;
   key_points: string[] | null;
+  why_it_matters: string | null;
   image_url: string | null;
   topic: string | null;
 };
@@ -34,14 +36,25 @@ export type EditionData = {
   savedIds: number[];
 };
 
+const STORY_FIELDS = ['id', 'url', 'title', 'author', 'source_title', 'published_at', 'tldr', 'summary', 'key_points', 'why_it_matters', 'image_url', 'topic'];
+
 export const editionsOf = (userId: string) => user(userId).collection('editions');
 
 /** An edition's stories, with this reader's source titles. */
 export async function editionStories(userId: string, editionId: number): Promise<(Article & { source_title: string })[]> {
   const ledger = rows<LedgerEntry>(await ledgerOf(userId).where('edition_id', '==', editionId).get());
   const titles = new Map(ledger.map((l) => [l.article_id, l.source_title]));
-  const list = await getMany<Article>(articles(), ledger.map((l) => l.article_id));
-  return list.map((a) => ({ ...a, source_title: titles.get(a.id) ?? a.source_title }));
+  // Only what's shown: full documents carry the article text and the raw email.
+  const list = await getMany<Article>(articles(), ledger.map((l) => l.article_id), STORY_FIELDS);
+  return list.map((a) => ({
+    ...a,
+    source_title: titles.get(a.id) ?? a.source_title,
+    title: stripMarkdown(a.title),
+    tldr: a.tldr && stripMarkdown(a.tldr),
+    summary: a.summary && stripMarkdown(a.summary),
+    why_it_matters: a.why_it_matters ? stripMarkdown(a.why_it_matters) : null,
+    key_points: a.key_points?.map(stripMarkdown) ?? null,
+  }));
 }
 
 export async function getEditionData(userId: string, id?: number): Promise<EditionData | null> {
@@ -61,13 +74,13 @@ export async function getEditionData(userId: string, id?: number): Promise<Editi
   const items: StoryItem[] = stories.map((a) => ({
     id: a.id, source_title: a.source_title, url: a.url, title: a.title, author: a.author,
     published_at: a.published_at ? new Date(a.published_at).toISOString() : null,
-    tldr: a.tldr, summary: a.summary, key_points: a.key_points, image_url: a.image_url, topic: a.topic,
+    tldr: a.tldr, summary: a.summary, key_points: a.key_points, why_it_matters: a.why_it_matters ?? null, image_url: a.image_url, topic: a.topic,
   }));
   const words = items.reduce((w, i) => w + `${i.title} ${i.summary ?? ''}`.split(/\s+/).length, 0) + (edition.intro?.split(/\s+/).length ?? 0);
   return {
     edition: {
-      id: edition.id, created_at: new Date(edition.created_at).toISOString(), headline: edition.headline, intro: edition.intro,
-      layout: edition.layout, item_count: edition.item_count, source_count: edition.source_count,
+      id: edition.id, created_at: new Date(edition.created_at).toISOString(), headline: edition.headline && stripMarkdown(edition.headline), intro: edition.intro && stripMarkdown(edition.intro),
+      layout: { ...edition.layout, sections: (edition.layout.sections ?? []).map((s) => ({ ...s, title: stripMarkdown(s.title) })) }, item_count: edition.item_count, source_count: edition.source_count,
     },
     number: count.data().count,
     items,
@@ -79,7 +92,7 @@ export async function getEditionData(userId: string, id?: number): Promise<Editi
   };
 }
 
-export async function listEditions(userId: string, limit = 200) {
-  const list = rows<Edition>(await editionsOf(userId).orderBy('id', 'desc').limit(limit).get());
+export async function listEditions(userId: string, limit = 60) {
+  const list = rows<Edition>(await editionsOf(userId).orderBy('id', 'desc').limit(limit).select('id', 'created_at', 'headline', 'item_count', 'source_count').get());
   return list.map(({ id, created_at, headline, item_count, source_count }) => ({ id, created_at, headline, item_count, source_count }));
 }

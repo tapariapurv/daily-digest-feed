@@ -40,11 +40,12 @@ export const articleId = (dedupeKey: string) => parseInt(createHash('sha256').up
 export const newId = () => Date.now() * 1000 + Math.floor(Math.random() * 1000);
 
 /** Fetch many docs by id (Firestore caps getAll; chunk to be safe). */
-export async function getMany<T>(ref: FirebaseFirestore.CollectionReference, ids: (string | number)[]): Promise<T[]> {
+export async function getMany<T>(ref: FirebaseFirestore.CollectionReference, ids: (string | number)[], fields?: string[]): Promise<T[]> {
   const out: T[] = [];
   const unique = [...new Set(ids.map(String))];
   for (let i = 0; i < unique.length; i += 300) {
-    const snaps = await db().getAll(...unique.slice(i, i + 300).map((id) => ref.doc(id)));
+    const refs = unique.slice(i, i + 300).map((id) => ref.doc(id));
+    const snaps = await (fields ? db().getAll(...refs, { fieldMask: fields }) : db().getAll(...refs));
     for (const s of snaps) if (s.exists) out.push(data<T>(s));
   }
   return out;
@@ -95,6 +96,7 @@ export type Article = {
   tldr: string | null;
   summary: string | null;
   key_points: string[] | null;
+  why_it_matters?: string | null;
   topic: string | null;
   quality: number | null;
   summarized_at: Date | null;

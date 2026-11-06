@@ -17,7 +17,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
               Morning Digest
             </Link>
           </header>
-          <main className="auth-card reveal">{children}</main>
+          <main className="auth-card">{children}</main>
         </div>
         <aside className="auth-art" aria-hidden>
           <div className="auth-paper">

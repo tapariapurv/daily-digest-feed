@@ -11,12 +11,14 @@ function Story({ item, props, big }: { item: StoryItem; props: Props & { read: S
   const { design, reading, data, preview } = props;
   const href = preview ? item.url : `/r/${item.id}?e=${data.edition.id}`;
   const when = timeAgo(item.published_at);
-  const showImage = design.images && !!item.image_url && design.template !== 'wire';
+  const showImage = design.images && !!item.image_url;
   const read = props.read.has(item.id);
-  const body =
-    reading.summaryStyle === 'headline' ? null : reading.summaryStyle === 'tldr' ? item.tldr ?? item.summary : item.summary ?? item.tldr;
+  const style = reading.summaryStyle;
+  const body = style === 'headline' ? null : style === 'tldr' ? item.tldr ?? item.summary : item.summary ?? item.tldr;
+  const full = style === 'detailed' || (style === 'summary' && big);
+  const why = (style === 'summary' || style === 'detailed') && item.why_it_matters;
   return (
-    <article className={`story${showImage ? ' has-media' : ''}${read ? ' is-read' : ''}`}>
+    <article className={`story${read ? ' is-read' : ''}`}>
       {showImage && <Thumb src={item.image_url!} href={href} eager={big} />}
       <div className="story-body">
         <div className="meta">
@@ -32,12 +34,20 @@ function Story({ item, props, big }: { item: StoryItem; props: Props & { read: S
           </a>
         </h3>
         {body && <p className="summary">{body}</p>}
-        {reading.summaryStyle === 'detailed' && !!item.key_points?.length && (
-          <ul className="points">
-            {item.key_points.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
+        {full && !!item.key_points?.length && (
+          <>
+            <p className="points-label">The details</p>
+            <ul className="points">
+              {item.key_points.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {why && (
+          <p className="why">
+            <strong>Why it matters:</strong> {why}
+          </p>
         )}
       </div>
     </article>
@@ -59,8 +69,8 @@ export function Edition(props: Props) {
   const storyCount = lead.length + sections.reduce((n, s) => n + s.items.length, 0);
 
   return (
-    <article>
-      <header className="masthead reveal">
+    <article className="edition">
+      <header className="masthead">
         <div className="masthead-inner">
           <div className="dateline meta">
             <span>
@@ -93,7 +103,7 @@ export function Edition(props: Props) {
       </header>
 
       {lead.length > 0 && (
-        <section className="section lead reveal" aria-labelledby="lead-title">
+        <section className="section lead" aria-labelledby="lead-title">
           <div className="section-head">
             <span className="section-num">★</span>
             <h2 className="section-title" id="lead-title">
@@ -109,7 +119,7 @@ export function Edition(props: Props) {
       )}
 
       {sections.map((s, i) => (
-        <section key={s.title} id={`s-${i + 1}`} className="section reveal" aria-labelledby={`s-${i + 1}-title`}>
+        <section key={s.title} id={`s-${i + 1}`} className="section" aria-labelledby={`s-${i + 1}-title`}>
           <div className="section-head">
             <span className="section-num">{pad(i + 1)}</span>
             <h2 className="section-title" id={`s-${i + 1}-title`}>
@@ -125,7 +135,7 @@ export function Edition(props: Props) {
       ))}
 
       {briefly.length > 0 && (
-        <section className="section reveal" aria-labelledby="briefly-title">
+        <section className="section" aria-labelledby="briefly-title">
           <div className="section-head">
             <span className="section-num">+</span>
             <h2 className="section-title" id="briefly-title">

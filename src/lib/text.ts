@@ -22,6 +22,22 @@ export function collapse(text: string): string {
     .trim();
 }
 
+/** AI models and some feeds leak Markdown ("## AI News", "**bold**"); readers should only see the words. */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/^[ \t]*(#{1,6}[ \t]+|>[ \t]+|[-*+][ \t]+)/gm, '')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/(^|[\s(])[*_]([^\s*_](?:[^*_\n]*[^\s*_])?)[*_](?=[\s).,:;!?]|$)/g, '$1$2')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/!?\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .trim();
+}
+
+const JUNK_IMAGE = /\/(pixel|spacer|1x1)\b|tracking|emoji|gravatar|feedburner|doubleclick|logo|placeholder|favicon|avatar|sprite|default[-_.]/i;
+
+/** Logos, pixels and stock fallbacks: not pictures of the story. */
+export const isJunkImage = (url: string) => JUNK_IMAGE.test(url);
+
 export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);

@@ -19,7 +19,7 @@ export async function Today({ profile }: { profile: Profile }) {
 
   if (!sourceCount && !data) {
     return (
-      <section className="empty masthead reveal">
+      <section className="empty masthead">
         <div className="masthead-inner">
           <p className="dateline meta">
             <span>Almost there</span>
@@ -39,7 +39,7 @@ export async function Today({ profile }: { profile: Profile }) {
   if (!data) {
     const working = lastRun?.status === 'running';
     return (
-      <section className="empty masthead reveal">
+      <section className="empty masthead">
         <div className="masthead-inner">
           <p className="dateline meta">
             <span>Edition No. 1</span>

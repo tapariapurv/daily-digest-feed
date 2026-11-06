@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { Landing } from '@/components/Landing';
+import { PageSkeleton } from '@/components/PageSkeleton';
 import { Today } from '@/components/Today';
 import { getSessionUser } from '@/lib/auth';
 import { getProfile } from '@/lib/profiles';
@@ -14,7 +16,9 @@ export default async function Home() {
   if (!profile.onboarded) redirect('/welcome');
   return (
     <AppShell profile={profile}>
-      <Today profile={profile} />
+      <Suspense fallback={<PageSkeleton />}>
+        <Today profile={profile} />
+      </Suspense>
     </AppShell>
   );
 }

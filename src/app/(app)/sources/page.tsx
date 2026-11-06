@@ -10,7 +10,7 @@ export default async function SourcesPage() {
   const user = await requireUser();
   const sources = await listSources(user.id);
   return (
-    <div className="reveal">
+    <div>
       <div className="page-head">
         <div>
           <h1 className="page-title">Sources</h1>

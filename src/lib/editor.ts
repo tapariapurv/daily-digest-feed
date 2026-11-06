@@ -1,6 +1,6 @@
 import type { EditionLayout } from './db.ts';
 import { generateJSON, type AiAuth } from './ai.ts';
-import { truncate } from './text.ts';
+import { stripMarkdown, truncate } from './text.ts';
 
 // ---------- Pass 1: summarise a batch of articles (shared by every reader) ----------
 
@@ -17,6 +17,7 @@ export type ArticleSummary = {
   tldr: string;
   summary: string;
   key_points: string[];
+  why_it_matters: string;
   topic: string;
   quality: number;
 };
@@ -33,10 +34,11 @@ const SUMMARY_SCHEMA = {
           tldr: { type: 'string', description: 'One line, under 20 words' },
           summary: { type: 'string', description: '2–3 sentences, under 70 words' },
           key_points: { type: 'array', items: { type: 'string' }, description: '2–4 short takeaways' },
+          why_it_matters: { type: 'string', description: 'One sentence, under 25 words' },
           topic: { type: 'string', description: '1–3 word topic label in Title Case' },
           quality: { type: 'integer', minimum: 1, maximum: 5 },
         },
-        required: ['id', 'tldr', 'summary', 'key_points', 'topic', 'quality'],
+        required: ['id', 'tldr', 'summary', 'key_points', 'why_it_matters', 'topic', 'quality'],
       },
     },
   },
@@ -52,7 +54,9 @@ export async function summariseBatch(articles: ArticleInput[], opts: { knownTopi
     '- summary: 2–3 sentences (under 70 words) stating the actual substance — the claim, finding, decision, number or announcement — so the reader knows what it says without clicking. Lead with the point. No "In this article", "The author discusses", hype, or rhetorical questions.',
     '- When the content has substance, include at least one concrete specific (a number, name, result, mechanism or recommendation). A vague summary like "explores the factors behind X" is a failure — say what the factors are.',
     '- key_points: 2–4 short takeaways (under 15 words each) that add detail beyond the summary.',
-    '- If the content is thin (just a title or teaser), keep everything to what can be reliably inferred from the title and source; do not invent details and never mention that content is missing. For videos or podcasts, summarise what the episode covers.',
+    '- why_it_matters: one plain sentence (under 25 words) on the consequence for the reader or the industry. Not a restatement of the summary.',
+    '- Plain text only in every field: no Markdown, no # or * characters.',
+    '- If the content is thin (just a title or teaser), keep everything to what can be reliably inferred from the title and source, and set quality to at most 2; do not invent details and never mention that content is missing. For videos or podcasts, summarise what the episode covers.',
     '- Write in English even if the article is not.',
     '- topic: a short Title Case label (1–3 words), e.g. "AI", "Startups", "Personal Finance", "Climate". Reuse an existing label when one fits.',
     '- quality 1–5 for a general thoughtful reader: 5 = major news or unusually valuable insight; 4 = substantive; 3 = solid; 2 = minor or niche; 1 = promotional, sponsored, job posts, link dumps, housekeeping.',
@@ -76,6 +80,7 @@ export async function summariseBatch(articles: ArticleInput[], opts: { knownTopi
       tldr: (it.tldr || it.summary).trim().slice(0, 240),
       summary: it.summary.trim(),
       key_points: (Array.isArray(it.key_points) ? it.key_points : []).map((k) => String(k).trim()).filter(Boolean).slice(0, 4),
+      why_it_matters: String(it.why_it_matters ?? '').trim().slice(0, 300),
       topic: (it.topic || 'Other').trim().slice(0, 40),
       quality: Math.min(5, Math.max(1, Math.round(Number(it.quality) || 3))),
     }));
@@ -118,12 +123,16 @@ export async function assembleEdition(items: EditionInput[], opts: EditionOption
       ? `About the reader (use it to choose and rank, never mention it): ${opts.interests.trim()}`
       : 'The reader is a curious generalist who values signal over noise.',
     `- Choose at most ${opts.maxStories} stories in total for lead + sections: the ones that matter most to this reader. Combine the article quality score with the reader’s interests; prefer recent items.`,
+    '- Lead and sections take only quality 3 or higher. Quality 2 belongs in briefly; quality 1 is left out.',
+    '- When several articles cover the same event, keep only the most substantive one.',
+    '- At most 3 stories from any one source, so the edition has range.',
     `- lead: the ${leadCount} most important chosen ids.`,
     '- sections: group the other chosen ids into coherent topical sections (between 1 and 7; merge thin topics; avoid single-item sections unless it truly stands alone). Order sections by importance, and ids within a section by importance. Section titles are 1–3 words, Title Case.',
     opts.briefly
       ? '- briefly: up to 12 remaining ids that are still worth a one-line mention. Promotional/sponsored/housekeeping items go here or nowhere.'
       : '- briefly: return an empty list.',
     '- Ids not chosen anywhere are simply left out. Never use an id twice.',
+    '- Plain text only: no Markdown, no # or * characters.',
     '- headline: a calm, specific title for the edition (max 9 words) naming the day’s main threads. Not clickbait, no emojis.',
     '- intro: 2–3 sentences, like a sharp editor’s note, connecting the most important chosen stories. Concrete; name things. No "Welcome" or "In today’s edition".',
   ].join('\n');
@@ -139,8 +148,8 @@ export async function assembleEdition(items: EditionInput[], opts: EditionOption
     console.error('assembleEdition failed, falling back to topic grouping', err);
   }
   return {
-    headline: draft.headline?.trim() || null,
-    intro: draft.intro?.trim() || null,
+    headline: draft.headline ? stripMarkdown(draft.headline) || null : null,
+    intro: draft.intro ? stripMarkdown(draft.intro) || null : null,
     layout: normaliseLayout(items, draft, opts),
     model,
   };
@@ -158,6 +167,27 @@ export function normaliseLayout(
   const valid = new Map(items.map((i) => [i.id, i]));
   const used = new Set<number>();
   let budget = Math.max(1, opts.maxStories);
+  // Quiet days with few good stories still get a paper, so these gates only apply when there's enough to choose from.
+  const minQuality = items.filter((i) => i.quality >= 3).length >= 5 ? 3 : 1;
+  const sourceCap = new Set(items.map((i) => i.source)).size >= 4 ? 3 : Infinity;
+  const perSource = new Map<string, number>();
+  const worthy = (i: EditionInput) => i.quality >= minQuality && (perSource.get(i.source) ?? 0) < sourceCap;
+  const claim = (i: EditionInput) => {
+    used.add(i.id);
+    perSource.set(i.source, (perSource.get(i.source) ?? 0) + 1);
+  };
+  const takeMain = (ids: number[] | undefined, max: number) => {
+    const out: number[] = [];
+    for (const id of ids ?? []) {
+      if (out.length >= max) break;
+      const item = valid.get(id);
+      if (item && !used.has(id) && worthy(item)) {
+        claim(item);
+        out.push(id);
+      }
+    }
+    return out;
+  };
   const take = (ids: number[] | undefined, max: number) => {
     const out: number[] = [];
     for (const id of ids ?? []) {
@@ -170,25 +200,26 @@ export function normaliseLayout(
     return out;
   };
 
-  const lead = take(draft.lead, Math.min(3, budget));
+  const lead = takeMain(draft.lead, Math.min(3, budget));
   budget -= lead.length;
   const sections: EditionLayout['sections'] = [];
   for (const s of draft.sections ?? []) {
     if (budget <= 0) break;
-    const ids = take(s.ids, budget);
+    const ids = takeMain(s.ids, budget);
     budget -= ids.length;
-    if (ids.length) sections.push({ title: (s.title || 'More').trim().slice(0, 40), ids });
+    if (ids.length) sections.push({ title: stripMarkdown(s.title || 'More').slice(0, 40), ids });
   }
 
   const modelChoseNothing = !lead.length && !sections.length;
   // Fill: if the model failed, or gave us fewer stories than allowed, add the best of the rest.
   if (modelChoseNothing || budget > 0) {
     const rest = items
-      .filter((i) => !used.has(i.id) && !(draft.briefly ?? []).includes(i.id) && i.quality >= 2)
+      .filter((i) => !used.has(i.id) && !(draft.briefly ?? []).includes(i.id) && i.quality >= Math.max(2, minQuality))
       .sort((a, b) => b.quality - a.quality);
     for (const item of rest) {
       if (budget <= 0) break;
-      used.add(item.id);
+      if (!worthy(item)) continue;
+      claim(item);
       budget--;
       const match = sections.find((s) => s.title.toLowerCase() === item.topic.toLowerCase());
       if (match) match.ids.push(item.id);

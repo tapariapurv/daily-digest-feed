@@ -22,7 +22,8 @@ const MAX_AGE = 10 * DAY;
 /** Per-run cap on articles sent to Gemini for one reader; the rest wait for the next run. */
 const MAX_SUMMARISE_PER_RUN = 80;
 const BATCH_SIZE = 20;
-const THIN_CONTENT = 500;
+/** Feed text shorter than this is a teaser: read the article itself before summarising. */
+const THIN_CONTENT = 1500;
 const MAX_ATTEMPTS = 3;
 /** Manual refreshes per reader per day — protects the shared free Gemini quota. */
 export const MANUAL_RUNS_PER_DAY = 12;
@@ -277,13 +278,14 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
     if (thin.length) {
       await stage(`Reading ${thin.length} article${thin.length === 1 ? '' : 's'}`);
       await mapLimit(thin, 8, async (a) => {
+        if (Date.now() > deadline - 120_000) return; // keep enough time to summarise what we have
         const page = await extractArticle(a.url);
         if (!page) return;
         if (page.text && page.text.length > (a.content?.length ?? 0)) {
           a.content = truncate(page.text, 12_000);
           stats.extracted++;
         }
-        a.image_url = a.image_url ?? page.image;
+        a.image_url = page.image ?? a.image_url; // the page's share image is larger than a feed thumbnail
         a.published_at = a.published_at ?? page.published ?? null;
         a.author = a.author ?? page.author ?? null;
         await articles().doc(String(a.id)).update({ content: a.content, image_url: a.image_url ?? null, published_at: a.published_at, author: a.author });
@@ -313,7 +315,7 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
           );
           await commitAll(
             items.map((s) => (b: FirebaseFirestore.WriteBatch) =>
-              b.update(articles().doc(String(s.id)), { tldr: s.tldr, summary: s.summary, key_points: s.key_points, topic: s.topic, quality: s.quality, summarized_at: new Date(), content: null }),
+              b.update(articles().doc(String(s.id)), { tldr: s.tldr, summary: s.summary, key_points: s.key_points, why_it_matters: s.why_it_matters, topic: s.topic, quality: s.quality, summarized_at: new Date(), content: null }),
             ),
           );
           for (const s of items) {
@@ -367,17 +369,21 @@ export async function executeRun(runId: number, userId: string, opts: { deadline
 
     // 4. Pictures for the stories people see first, when the reader wants images.
     if (design.images) {
-      const wanted = [...draft.layout.lead, ...draft.layout.sections.flatMap((s) => s.ids.slice(0, 3))]
-        .map((id) => byId.get(id)!)
-        .filter((a) => a && !a.image_url)
-        .slice(0, 10);
-      if (wanted.length) {
-        await stage('Finding images');
-        await mapLimit(wanted, 6, async (a) => {
-          const page = await extractArticle(a.url);
-          if (page?.image) await articles().doc(String(a.id)).update({ image_url: page.image });
-        });
-      }
+      const shown = [...draft.layout.lead, ...draft.layout.sections.flatMap((s) => s.ids)].map((id) => byId.get(id)!).filter(Boolean);
+      const alreadyRead = new Set(thin.map((a) => a.id));
+      await stage('Finding images');
+      await mapLimit(shown.filter((a) => !alreadyRead.has(a.id)).slice(0, 24), 8, async (a) => {
+        if (Date.now() > deadline - 30_000) return;
+        const page = await extractArticle(a.url);
+        if (page?.image && page.image !== a.image_url) {
+          a.image_url = page.image;
+          await articles().doc(String(a.id)).update({ image_url: page.image });
+        }
+      });
+      // The same picture on two stories is a site-wide fallback, not a photo of either.
+      const uses = new Map<string, number>();
+      for (const a of shown) if (a.image_url) uses.set(a.image_url, (uses.get(a.image_url) ?? 0) + 1);
+      await commitAll(shown.filter((a) => a.image_url && uses.get(a.image_url)! > 1).map((a) => (b: FirebaseFirestore.WriteBatch) => b.update(articles().doc(String(a.id)), { image_url: null })));
     }
 
     const mainIds = [...draft.layout.lead, ...draft.layout.sections.flatMap((s) => s.ids)];

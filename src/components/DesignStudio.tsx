@@ -81,7 +81,7 @@ export function DesignStudio({
   }
 
   return (
-    <div className="reveal">
+    <div>
       {!onboarding && (
         <div className="page-head">
           <div>

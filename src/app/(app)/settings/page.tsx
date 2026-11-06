@@ -15,7 +15,7 @@ export default async function SettingsPage() {
     runsOf(user.id).orderBy('started_at', 'desc').limit(8).get().then((s) => rows<Run>(s)),
   ]);
   return (
-    <div className="reveal">
+    <div>
       <div className="page-head">
         <div>
           <h1 className="page-title">Settings</h1>
