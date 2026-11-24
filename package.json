@@ -20,7 +20,7 @@
     "firebase": "^13.1.0",
     "firebase-admin": "^13.10.0",
     "linkedom": "^0.18.14",
-    "next": "^16.4.3",
+    "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
