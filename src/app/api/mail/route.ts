@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { profiles } from '@/lib/db';
 import { mailAccount, mailIn, mailMeta, mailOut } from '@/lib/mailbox';
 
 export const maxDuration = 30;
@@ -15,7 +16,8 @@ async function caller(req: Request): Promise<string | null> {
 
 /**
  * Apps Script mail bridge, called every 10 minutes by scheduler/Code.js.
- *   {}            → { inboxes, outbox }  addresses to collect from, editions to send
+ *   {}            → { inboxes, outbox, next }  addresses to collect from, editions to send,
+ *                   and when the earliest edition is due, so the script only wakes the app then
  *   { issue }     → stores one newsletter issue
  *   { sent: id }  → removes a sent email from the outbox
  */
@@ -37,9 +39,15 @@ export async function POST(req: Request) {
     await mailOut().doc(body.sent).delete();
     return NextResponse.json({ ok: true });
   }
-  const [meta, outbox] = await Promise.all([mailMeta().get(), mailOut().orderBy('created_at').limit(20).get()]);
+  const [meta, outbox, soonest] = await Promise.all([
+    mailMeta().get(),
+    mailOut().orderBy('created_at').limit(20).get(),
+    // ponytail: assumes one of the 20 earliest schedules is an onboarded reader; widen if many sign-ups never finish
+    profiles().where('next_run_at', '>', new Date(0)).orderBy('next_run_at').limit(20).select('onboarded', 'next_run_at').get(),
+  ]);
   return NextResponse.json({
     inboxes: (meta.get('inboxes') as string[] | undefined) ?? [],
     outbox: outbox.docs.map((d) => ({ id: d.id, to: d.get('to'), subject: d.get('subject'), html: d.get('html'), text: d.get('text'), name: d.get('name') })),
+    next: soonest.docs.find((d) => d.get('onboarded'))?.get('next_run_at')?.toMillis() ?? null,
   });
 }
