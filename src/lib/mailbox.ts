@@ -9,6 +9,17 @@ import { htmlToText } from './text';
 /** The Gmail account the Apps Script runs as; it receives newsletters and sends editions. */
 export const mailAccount = (): string | null => process.env.MAIL_ACCOUNT?.trim().toLowerCase() || null;
 
+/** True when the request carries an OAuth token for the mail account, i.e. it comes from scheduler/Code.js. */
+export async function fromMailAccount(req: Request): Promise<boolean> {
+  const account = mailAccount();
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  if (!account || !token) return false;
+  const res = await fetch('https://oauth2.googleapis.com/tokeninfo', { method: 'POST', body: new URLSearchParams({ access_token: token }) });
+  if (!res.ok) return false;
+  const info = (await res.json()) as { email?: string; email_verified?: string | boolean };
+  return String(info.email_verified) === 'true' && info.email?.toLowerCase() === account;
+}
+
 export function mailboxConfigured(): boolean {
   return /@/.test(mailAccount() ?? '');
 }

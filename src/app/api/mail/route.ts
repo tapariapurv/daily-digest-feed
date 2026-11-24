@@ -1,18 +1,8 @@
 import { NextResponse } from 'next/server';
 import { profiles } from '@/lib/db';
-import { mailAccount, mailIn, mailMeta, mailOut } from '@/lib/mailbox';
+import { fromMailAccount, mailIn, mailMeta, mailOut } from '@/lib/mailbox';
 
 export const maxDuration = 30;
-
-/** Who is calling: the Google account behind the Apps Script's OAuth token. */
-async function caller(req: Request): Promise<string | null> {
-  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (!token) return null;
-  const res = await fetch('https://oauth2.googleapis.com/tokeninfo', { method: 'POST', body: new URLSearchParams({ access_token: token }) });
-  if (!res.ok) return null;
-  const info = (await res.json()) as { email?: string; email_verified?: string | boolean };
-  return String(info.email_verified) === 'true' ? info.email?.toLowerCase() ?? null : null;
-}
 
 /**
  * Apps Script mail bridge, called every 10 minutes by scheduler/Code.js.
@@ -22,8 +12,7 @@ async function caller(req: Request): Promise<string | null> {
  *   { sent: id }  → removes a sent email from the outbox
  */
 export async function POST(req: Request) {
-  const account = mailAccount();
-  if (!account || (await caller(req)) !== account) return NextResponse.json({ error: 'Not the mail account' }, { status: 403 });
+  if (!(await fromMailAccount(req))) return NextResponse.json({ error: 'Not the mail account' }, { status: 403 });
   const body = (await req.json().catch(() => ({}))) as { issue?: Record<string, string>; sent?: string };
 
   if (body.issue) {

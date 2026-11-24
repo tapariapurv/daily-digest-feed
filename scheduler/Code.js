@@ -23,7 +23,7 @@ function tick() {
       Object.assign(s, { next: work.next === undefined ? 0 : work.next, inboxes: work.inboxes, synced: now, check: false });
     }
     if (s.next != null && now >= s.next - LEAD) {
-      UrlFetchApp.fetch(APP + '/api/cron/tick', { method: 'post', muteHttpExceptions: true });
+      UrlFetchApp.fetch(APP + '/api/cron/tick', { method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
       s.check = true; // next wake: send what the run queued and learn the following edition
     }
   } finally {

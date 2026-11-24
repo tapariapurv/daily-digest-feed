@@ -1,6 +1,8 @@
 import { after } from 'next/server';
 import { json } from '@/lib/api';
+import { timingSafeEqual } from 'node:crypto';
 import { db, profiles } from '@/lib/db';
+import { fromMailAccount } from '@/lib/mailbox';
 import { executeRun, prune, startRun } from '@/lib/pipeline';
 import { normaliseSchedule } from '@/lib/profile';
 import { nextRunAfter } from '@/lib/schedule';
@@ -11,12 +13,21 @@ export const dynamic = 'force-dynamic';
 const BUDGET_MS = 250_000;
 const MIN_GAP_MS = 4 * 60_000;
 
+function cronSecret(req: Request): boolean {
+  const want = process.env.CRON_SECRET;
+  const got = req.headers.get('authorization');
+  if (!want || !got) return false;
+  const a = Buffer.from(got), b = Buffer.from(`Bearer ${want}`);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /**
- * Called every 10 minutes by a Google Apps Script trigger (and daily by Vercel Cron as a backstop).
- * No secret needed: it only prints editions that are already due, and ticks closer than 4 minutes apart are ignored.
+ * Called by the Apps Script scheduler when an edition is due (and daily by Vercel Cron as a backstop).
+ * Callers prove themselves with CRON_SECRET (Vercel Cron sends it) or the mail account's Google token (the script).
  * Claims readers whose edition is due within 10 minutes, so papers are ready on time.
  */
-async function tick() {
+async function tick(req: Request) {
+  if (!(cronSecret(req) || (await fromMailAccount(req)))) return json({ error: 'Unauthorized' }, 401);
   const meta = db().collection('meta').doc('tick');
   const ok = await db().runTransaction(async (tx) => {
     const last = (await tx.get(meta)).get('at')?.toMillis?.() ?? 0;
